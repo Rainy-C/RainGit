@@ -28,7 +28,8 @@ private val timestamp = Regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\
 private val runnerMarker = Regex("^##\\[([^]]+)]")
 private val workflowMarker = Regex("^::(warning|error|notice)(?:\\s+[^\\r\\n]*?)?::", RegexOption.IGNORE_CASE)
 private val compilerDiagnostic = Regex("^([ew]):\\s+(?:file://)?(.+?):(\\d+):(\\d+)\\s+(.+)$")
-private val infrastructure = Regex("^(Runner Image|Runner Image Provisioner|Operating System|GITHUB_TOKEN Permissions|Getting Git version info|Setting up auth|Restore Gradle|Caching Gradle|Stopping Gradle|Installed distributions|Provision Gradle|All Gradle Wrapper|Disabling automatic garbage collection)", RegexOption.IGNORE_CASE)
+private val infrastructure = Regex("^(Runner Image|Runner Image Provisioner|Operating System|GITHUB_TOKEN Permissions|Getting Git version info|Setting up auth|Restore Gradle|Caching Gradle|Stopping Gradle|Installed distributions|Provision Gradle|All Gradle Wrapper|Disabling automatic garbage collection|Run actions/checkout|Run actions/setup-java|Run gradle/actions/setup-gradle|Initializing the repository|Fetching the repository|Determining the checkout info|Checking out the ref|Post job cleanup|Run set -euo pipefail)", RegexOption.IGNORE_CASE)
+private val importantStep = Regex("(── .*\\.txt|BUILD SUCCESSFUL|BUILD FAILED|compileReleaseKotlin|assembleRelease|packageRelease|signRelease|:app:.* FAILED|Verify Release signature|Upload signed Release APK)", RegexOption.IGNORE_CASE)
 
 internal fun cleanBuildLogText(text: String): String =
     text.replace(ansiOsc, "").replace(ansiCsi, "").replace(controls, "")
@@ -89,6 +90,7 @@ internal fun parseBuildLog(raw: String): BuildLogDocument {
             else -> LogKind.NORMAL
         }
         var content = line.removePrefix("[command]")
+        if (line.startsWith("── ")) content = "任务 · " + line.removePrefix("── ").removeSuffix(" ──").removeSuffix(".txt")
         var location = ""
         var explanation = ""
         diagnostic?.let {
@@ -100,6 +102,7 @@ internal fun parseBuildLog(raw: String): BuildLogDocument {
             explanation = "下次构建会生成不同密钥，无法直接覆盖安装。配置固定签名密钥后才能持续升级。"
         }
         val detail = echoedScript || (noisyGroup && kind != LogKind.ERROR && kind != LogKind.WARNING) ||
+            (kind == LogKind.STEP && !importantStep.containsMatchIn(line)) ||
             line.startsWith("[command]") || indented ||
             (lower.startsWith("> task ") && kind != LogKind.ERROR) ||
             lower.startsWith("cache ") || lower.startsWith("received ") || lower.startsWith("post job cleanup")

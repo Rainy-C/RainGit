@@ -119,11 +119,14 @@ fun RainApp(
                 else AnimatedContent(
                     targetState = model.screen,
                     transitionSpec = {
-                        val forward = targetState == "detail" || (initialState != "detail" &&
-                            listOf("home", "local", "actions", "settings").indexOf(targetState) >
-                            listOf("home", "local", "actions", "settings").indexOf(initialState))
-                        (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { if (forward) it / 12 else -it / 12 }) togetherWith
-                            (fadeOut(tween(120)) + slideOutHorizontally(tween(220)) { if (forward) -it / 12 else it / 12 })
+                        if (targetState == "detail" || initialState == "detail") {
+                            fadeIn(tween(115)) togetherWith fadeOut(tween(75))
+                        } else {
+                            val pages = listOf("home", "local", "actions", "settings")
+                            val forward = pages.indexOf(targetState) > pages.indexOf(initialState)
+                            (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { if (forward) it / 12 else -it / 12 }) togetherWith
+                                (fadeOut(tween(120)) + slideOutHorizontally(tween(220)) { if (forward) -it / 12 else it / 12 })
+                        }
                     },
                     label = "screen", modifier = Modifier.weight(1f)
                 ) { page ->

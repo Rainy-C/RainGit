@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -40,18 +40,14 @@ jobs:
           SIGNING_KEY_PASS: ${{ secrets.RAINGIT_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          if [[ -z "$SIGNING_JKS_B64" || -z "$SIGNING_PASS" || -z "$SIGNING_ALIAS" || -z "$SIGNING_KEY_PASS" ]]; then
+            echo '::error::缺少固定 Release 签名。请在 Termux 的 RainGit 源码目录执行 bash scripts/setup-signing.sh 后重新运行。'
+            exit 1
+          fi
           KEYSTORE="$RUNNER_TEMP/raingit-release.jks"
-          if [[ -n "$SIGNING_JKS_B64" && -n "$SIGNING_PASS" && -n "$SIGNING_ALIAS" && -n "$SIGNING_KEY_PASS" ]]; then
-            printf '%s' "$SIGNING_JKS_B64" | base64 --decode > "$KEYSTORE"
-            echo 'Using stable release signing from repository Secrets.'
-          elif [[ -z "$SIGNING_JKS_B64" && -z "$SIGNING_PASS" && -z "$SIGNING_ALIAS" && -z "$SIGNING_KEY_PASS" ]]; then
-            SIGNING_PASS="$(openssl rand -hex 20)"
-            SIGNING_KEY_PASS="$SIGNING_PASS"
-            SIGNING_ALIAS='raingit'
-            keytool -genkeypair -noprompt -keystore "$KEYSTORE" -storetype PKCS12 -alias "$SIGNING_ALIAS" -keyalg RSA -keysize 3072 -validity 36500 -dname 'CN=RainGit,O=RainGit,C=CN' -storepass "$SIGNING_PASS" -keypass "$SIGNING_KEY_PASS" > /dev/null
-            echo '::warning::Temporary signing key: this APK is signed, but future runs cannot upgrade it unless the same key is configured in Secrets.'
-          else
-            echo '::error::Signing Secrets incomplete: provide all four RAINGIT_* secrets, or none for temporary signing.'
+          printf '%s' "$SIGNING_JKS_B64" | base64 --decode > "$KEYSTORE"
+          if [[ ! -s "$KEYSTORE" ]]; then
+            echo '::error::签名文件为空或无法解码'
             exit 1
           fi
           chmod 600 "$KEYSTORE"
@@ -63,6 +59,7 @@ jobs:
             printf 'RAINGIT_SIGNING_KEY_ALIAS=%s\n' "$SIGNING_ALIAS"
             printf 'RAINGIT_SIGNING_KEY_PASSWORD=%s\n' "$SIGNING_KEY_PASS"
           } >> "$GITHUB_ENV"
+          echo '固定 Release 签名已就绪'
       - name: Build signed Release
         run: gradle --no-daemon --max-workers=2 :app:assembleRelease
       - name: Verify Release signature

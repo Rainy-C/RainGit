@@ -3,17 +3,13 @@ package me.rain.git.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -29,132 +25,146 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class LogFilter { SUMMARY, ALL, ERROR, WARNING }
+private enum class LogViewFilter { SUMMARY, ALL, ERRORS, WARNINGS }
 
 @Composable
-internal fun BuildLogViewer(raw: String, onClose: () -> Unit, status: String = "", loading: Boolean = false,
-    refresh: () -> Unit = {}, openWeb: () -> Unit = {}) {
+internal fun BuildLogViewer(
+    raw: String,
+    onClose: () -> Unit,
+    status: String = "",
+    loading: Boolean = false,
+    refresh: () -> Unit = {},
+    openWeb: () -> Unit = {}
+) {
     val context = LocalContext.current
     val document by produceState(BuildLogDocument(emptyList()), raw) {
         value = withContext(Dispatchers.Default) { parseBuildLog(raw) }
     }
+    var filter by remember { mutableStateOf(LogViewFilter.SUMMARY) }
     var search by remember { mutableStateOf("") }
-    var searching by remember { mutableStateOf(false) }
-    var filter by remember { mutableStateOf(LogFilter.SUMMARY) }
+    var showSearch by remember { mutableStateOf(false) }
     var showTime by remember { mutableStateOf(false) }
-    var menu by remember { mutableStateOf(false) }
+    var more by remember { mutableStateOf(false) }
     var followTail by remember { mutableStateOf(false) }
-    val shown by produceState(emptyList<BuildLogRow>(), document, search, filter) {
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    val visible by produceState(emptyList<BuildLogRow>(), document, filter, search) {
         value = withContext(Dispatchers.Default) {
+            val seenWarnings = HashSet<String>()
             document.rows.filter { row ->
-                val matches = search.isBlank() || listOf(row.content, row.location, row.section, row.explanation)
-                    .any { it.contains(search, ignoreCase = true) }
-                matches && when (filter) {
-                    LogFilter.SUMMARY -> row.kind == LogKind.ERROR || row.kind == LogKind.WARNING ||
+                val passes = when (filter) {
+                    LogViewFilter.SUMMARY -> row.kind == LogKind.ERROR || row.kind == LogKind.WARNING ||
                         (row.kind == LogKind.STEP && !row.detail)
-                    LogFilter.ALL -> true
-                    LogFilter.ERROR -> row.kind == LogKind.ERROR
-                    LogFilter.WARNING -> row.kind == LogKind.WARNING
+                    LogViewFilter.ALL -> true
+                    LogViewFilter.ERRORS -> row.kind == LogKind.ERROR
+                    LogViewFilter.WARNINGS -> row.kind == LogKind.WARNING
                 }
+                passes && (search.isBlank() || listOf(row.content, row.location, row.section, row.explanation)
+                    .any { it.contains(search, ignoreCase = true) }) &&
+                    (filter != LogViewFilter.SUMMARY || row.kind != LogKind.WARNING ||
+                        seenWarnings.add(row.content.trim().lowercase()))
             }
         }
     }
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
+
     fun copy(text: String) {
+        val limited = text.takeLast(250_000)
         context.getSystemService(ClipboardManager::class.java)
-            ?.setPrimaryClip(ClipData.newPlainText("RainGit 日志", text.takeLast(200_000)))
-        Toast.makeText(context, if (text.length > 200_000) "已复制末尾 20 万字符" else "已复制", Toast.LENGTH_SHORT).show()
+            ?.setPrimaryClip(ClipData.newPlainText("RainGit 日志", limited))
+        Toast.makeText(context, if (text.length > limited.length) "已复制最后 25 万字符" else "已复制", Toast.LENGTH_SHORT).show()
     }
-    LaunchedEffect(listState) {
-        listState.interactionSource.interactions.collect { if (it is DragInteraction.Start) followTail = false }
+    LaunchedEffect(filter, search) { followTail = false; listState.scrollToItem(0) }
+    LaunchedEffect(visible.size, followTail) {
+        if (followTail && visible.isNotEmpty()) listState.scrollToItem(visible.lastIndex + if (document.omitted > 0) 1 else 0)
     }
-    LaunchedEffect(shown, followTail) {
-        if (followTail && search.isBlank() && shown.isNotEmpty()) listState.scrollToItem(shown.lastIndex + if (document.omitted > 0) 1 else 0)
-    }
+
     FullScreenPanel(onClose) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "关闭日志") }
-                Text("任务日志", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                IconButton(onClick = { searching = !searching; if (!searching) search = "" }) {
-                    Icon(Icons.Rounded.Search, "搜索日志")
+                Text("构建日志", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                IconButton(onClick = { showSearch = !showSearch; if (!showSearch) search = "" }) {
+                    Icon(Icons.Rounded.Search, "搜索")
                 }
                 Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "更多操作") }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("刷新日志") }, enabled = !loading, onClick = { menu = false; refresh() })
-                        DropdownMenuItem(text = { Text(if (showTime) "隐藏时间" else "显示时间") }, onClick = { showTime = !showTime; menu = false })
+                    IconButton(onClick = { more = true }) { Icon(Icons.Rounded.MoreVert, "更多") }
+                    DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                        DropdownMenuItem(text = { Text("刷新") }, enabled = !loading, onClick = { more = false; refresh() })
+                        DropdownMenuItem(text = { Text(if (showTime) "隐藏时间" else "显示时间") }, onClick = { more = false; showTime = !showTime })
                         DropdownMenuItem(text = { Text("复制当前内容") }, onClick = {
-                            menu = false
+                            more = false
                             scope.launch {
-                                val text = withContext(Dispatchers.Default) { shown.joinToString("\n") {
-                                    listOf(it.location, it.content, it.explanation).filter(String::isNotBlank).joinToString(" · ")
-                                } }
-                                copy(text)
+                                copy(withContext(Dispatchers.Default) { visible.joinToString("\n") { it.original } })
                             }
                         })
-                        DropdownMenuItem(text = { Text("复制原始日志") }, onClick = { menu = false; copy(raw) })
-                        DropdownMenuItem(text = { Text("在 GitHub 查看") }, onClick = { menu = false; openWeb() })
+                        DropdownMenuItem(text = { Text("复制完整原文") }, onClick = { more = false; copy(raw) })
+                        DropdownMenuItem(text = { Text("GitHub 原始日志") }, onClick = { more = false; openWeb() })
                     }
                 }
             }
-            Text(status.ifBlank { if (loading) "正在获取日志…" else "关键步骤与问题摘要" },
-                Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            Text(status.ifBlank { if (loading) "正在同步日志" else "已同步" },
+                Modifier.padding(start = 18.dp, end = 18.dp),
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             WaveLoadingBar(loading, Modifier.fillMaxWidth())
-            AnimatedVisibility(searching) {
-                OutlinedTextField(search, { search = it; followTail = false }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    singleLine = true, shape = RoundedCornerShape(12.dp), placeholder = { Text("搜索内容或文件名") },
-                    trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Rounded.Close, "清空搜索") } })
+            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("${document.rows.size} 行", style = MaterialTheme.typography.labelMedium)
+                Text("${document.errors} 错误", style = MaterialTheme.typography.labelMedium,
+                    color = if (document.errors > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${document.warnings} 警告", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(LogFilter.SUMMARY to "摘要", LogFilter.ALL to "全部", LogFilter.ERROR to "错误 ${document.errors}",
-                    LogFilter.WARNING to "警告 ${document.warnings}").forEach { (value, label) ->
-                    FilterChip(selected = filter == value, onClick = {
-                        filter = value; followTail = false
-                        scope.launch { listState.scrollToItem(0) }
-                    }, label = { Text(label) })
+            if (showSearch) {
+                OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    placeholder = { Text("搜索错误、文件名、任务") }, singleLine = true,
+                    trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Rounded.Close, "清除") } })
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 14.dp, end = 14.dp, bottom = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(LogViewFilter.SUMMARY to "重点", LogViewFilter.ALL to "完整输出",
+                    LogViewFilter.ERRORS to "错误", LogViewFilter.WARNINGS to "警告").forEach { (type, title) ->
+                    FilterChip(selected = filter == type, onClick = { filter = type }, label = { Text(title) })
                 }
             }
-            if (document.firstError != null && filter != LogFilter.WARNING) {
+            if (document.firstError != null && filter != LogViewFilter.WARNINGS) {
                 TextButton(onClick = {
-                    val target = shown.indexOfFirst { it.index == document.firstError?.index }
+                    filter = LogViewFilter.ERRORS
+                    search = ""
                     followTail = false
-                    if (target >= 0) scope.launch { listState.animateScrollToItem(target + if (document.omitted > 0) 1 else 0) }
-                    else { search = ""; filter = LogFilter.ERROR }
-                }, modifier = Modifier.padding(horizontal = 8.dp)) {
-                    Icon(Icons.Rounded.ErrorOutline, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("定位错误${document.firstError?.location?.takeIf(String::isNotEmpty)?.let { " · $it" }.orEmpty()}",
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }, modifier = Modifier.padding(start = 9.dp)) {
+                    Icon(Icons.Rounded.ErrorOutline, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("查看首个错误", style = MaterialTheme.typography.labelMedium)
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState,
-                contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                Modifier.weight(1f).fillMaxWidth(), state = listState,
+                contentPadding = PaddingValues(vertical = 9.dp, horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
                 if (document.omitted > 0) item {
-                    Text("较早的 ${document.omitted} 行未展示，可在 GitHub 查看完整日志。", style = MaterialTheme.typography.labelSmall)
+                    Text("更早的 ${document.omitted} 行已折叠，请在 GitHub 查看原文。",
+                        Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
                 }
-                items(shown, key = { it.index }, contentType = { it.kind }) { row ->
-                    LogEntry(row, showTime, ::copy)
+                items(visible, key = { it.index }, contentType = { it.kind }) { row ->
+                    LogLine(row, showTime, ::copy)
                 }
-                if (shown.isEmpty()) item {
-                    EmptyPanel(Icons.Rounded.Terminal, if (loading) "等待日志" else "暂无匹配内容",
-                        if (filter == LogFilter.SUMMARY) "切换「全部」查看完整输出" else "试试其他关键字或筛选项")
+                if (visible.isEmpty()) item {
+                    EmptyPanel(Icons.Rounded.Terminal, if (loading) "正在等待输出" else "没有匹配记录",
+                        if (filter == LogViewFilter.SUMMARY) "点击「完整输出」查看所有命令与步骤" else "尝试其他筛选条件")
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${shown.size} 行 · 点击展开原文", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("显示 ${visible.size} 行", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = { followTail = !followTail }) {
                     Icon(if (followTail) Icons.Rounded.Pause else Icons.Rounded.VerticalAlignBottom, null, Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(5.dp))
                     Text(if (followTail) "停止跟随" else "跟随最新")
                 }
             }
@@ -163,47 +173,67 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit, status: String = "
 }
 
 @Composable
-private fun LogEntry(row: BuildLogRow, showTime: Boolean, copy: (String) -> Unit) {
-    var expanded by remember(row.index, row.original) { mutableStateOf(false) }
-    val issue = row.kind == LogKind.ERROR || row.kind == LogKind.WARNING
+private fun LogLine(row: BuildLogRow, showTime: Boolean, copy: (String) -> Unit) {
+    var expanded by remember(row.index) { mutableStateOf(false) }
+    val critical = row.kind == LogKind.ERROR
+    val warning = row.kind == LogKind.WARNING
+    val step = row.kind == LogKind.STEP
     val colors = MaterialTheme.colorScheme
-    Surface(color = when {
-        issue -> colors.surfaceContainerHigh
-        row.kind == LogKind.STEP -> colors.surfaceContainerLow
-        else -> colors.surface
-    }, shape = RoundedCornerShape(12.dp)) {
-        Column(Modifier.fillMaxWidth().animateContentSize(tween(160)).clickable { expanded = !expanded }.padding(12.dp)) {
-            if (issue || row.location.isNotEmpty() || (showTime && row.time.isNotEmpty())) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (issue) {
-                        Icon(if (row.kind == LogKind.ERROR) Icons.Rounded.ErrorOutline else Icons.Rounded.WarningAmber,
-                            null, Modifier.size(16.dp), tint = colors.onSurface)
-                        Text(if (row.kind == LogKind.ERROR) "错误" else "警告", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+    val surface = when {
+        critical -> colors.errorContainer.copy(alpha = .55f)
+        warning -> colors.surfaceContainerHigh
+        step -> colors.surfaceContainerLow
+        else -> colors.background
+    }
+    Surface(color = surface, shape = RoundedCornerShape(if (critical || warning) 10.dp else 5.dp)) {
+        Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }
+            .padding(horizontal = 11.dp, vertical = if (critical || warning) 10.dp else if (step) 9.dp else 5.dp)) {
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(when {
+                    critical -> Icons.Rounded.ErrorOutline
+                    warning -> Icons.Rounded.WarningAmber
+                    step -> Icons.Rounded.ChevronRight
+                    else -> Icons.Rounded.SubdirectoryArrowRight
+                }, null, Modifier.padding(top = 2.dp).size(15.dp),
+                    tint = if (critical) colors.error else colors.onSurfaceVariant)
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (critical || warning) {
+                            Text(if (critical) "错误" else "警告", style = MaterialTheme.typography.labelSmall,
+                                color = if (critical) colors.error else colors.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        if (row.location.isNotBlank()) {
+                            Text(row.location, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace))
+                        } else Spacer(Modifier.weight(1f))
+                        if (showTime && row.time.isNotEmpty()) Text(row.time, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
                     }
-                    if (row.location.isNotEmpty()) Text(row.location, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
-                        fontFamily = FontFamily.Monospace)
-                    if (showTime && row.time.isNotEmpty()) Text(row.time, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                    Text(row.content, style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = if (step) FontFamily.Default else FontFamily.Monospace,
+                        fontSize = if (step) 14.sp else 12.sp,
+                        lineHeight = if (step) 21.sp else 18.sp,
+                        fontWeight = if (step || critical) FontWeight.Medium else FontWeight.Normal),
+                        maxLines = if (expanded || critical) Int.MAX_VALUE else if (warning) 5 else if (step) 2 else 3,
+                        overflow = TextOverflow.Ellipsis)
+                    if (row.explanation.isNotBlank()) Text(row.explanation, Modifier.padding(top = 5.dp),
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                 }
-                Spacer(Modifier.height(6.dp))
             }
-            Text(row.content, style = MaterialTheme.typography.bodyMedium.copy(
-                fontFamily = if (row.explanation.isNotEmpty() || row.kind == LogKind.STEP) FontFamily.Default else FontFamily.Monospace,
-                fontSize = 14.sp, lineHeight = 22.sp,
-                fontWeight = if (issue || row.kind == LogKind.STEP) FontWeight.Medium else FontWeight.Normal),
-                color = colors.onSurface, maxLines = if (issue || expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis)
-            if (row.explanation.isNotEmpty()) Text(row.explanation, Modifier.padding(top = 6.dp),
-                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp), color = colors.onSurfaceVariant)
             if (expanded) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(7.dp))
                 HorizontalDivider(color = colors.outlineVariant)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(row.section.ifBlank { "原始日志" }, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = { copy(row.original) }) { Icon(Icons.Rounded.ContentCopy, "复制这一行", Modifier.size(18.dp)) }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(row.section.ifBlank { "原始行" }, Modifier.weight(1f), maxLines = 1,
+                        style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                    IconButton(onClick = { copy(row.original) }, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Rounded.ContentCopy, "复制原文", Modifier.size(17.dp))
+                    }
                 }
                 SelectionContainer {
-                    Text(cleanBuildLogText(row.original), style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, lineHeight = 18.sp),
-                        color = colors.onSurfaceVariant)
+                    Text(cleanBuildLogText(row.original), style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace, fontSize = 12.sp), color = colors.onSurfaceVariant)
                 }
             }
         }

@@ -83,7 +83,10 @@ internal fun ActionsScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
                                 StateLabel(look.name, look.color)
                             }
                             Spacer(Modifier.height(10.dp))
-                            Text("#${latest.number} · ${latest.branch} · ${latest.created.take(16).replace('T', ' ')}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            RunFacts(latest)
+                            Spacer(Modifier.height(4.dp))
+                            Text("${latest.created.take(16).replace('T', ' ')} UTC", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(9.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("查看任务步骤与 APK", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
@@ -151,6 +154,28 @@ internal fun ActionsScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
 }
 
 @Composable
+private fun RunFacts(run: Run) {
+    Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(8.dp)) {
+            Text("运行 #${run.number}", Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+        }
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(8.dp)) {
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.AccountTree, null, Modifier.size(13.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(run.branch.ifBlank { "未知分支" }, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        if (run.sha.isNotBlank()) {
+            Text(run.sha.take(7), style = MaterialTheme.typography.labelSmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 private fun RunTile(run: Run, onClick: () -> Unit, onLogs: () -> Unit, enabled: Boolean) {
     val look = runAppearance(run.status, run.conclusion)
     Surface(onClick = onClick, enabled = enabled, color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -161,7 +186,8 @@ private fun RunTile(run: Run, onClick: () -> Unit, onLogs: () -> Unit, enabled: 
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(run.name.ifBlank { "工作流" }, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text("#${run.number}  ·  ${run.branch}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(5.dp))
+                    RunFacts(run)
                 }
                 StateLabel(look.name, look.color)
             }
@@ -200,7 +226,8 @@ private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(run.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                            Text("#${run.number}  ·  ${run.branch}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(5.dp))
+                            RunFacts(run)
                         }
                         StateLabel(look.name, look.color)
                     }
@@ -233,7 +260,7 @@ private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
             val isExpanded = expanded[job.id] ?: (job.status == "in_progress" || job.conclusion in listOf("failure", "timed_out"))
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.animateContentSize(animationSpec = tween(150))) {
+                Column {
                     Row(Modifier.fillMaxWidth().clickable { expanded = expanded + (job.id to !isExpanded) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(state.icon, null, Modifier.size(20.dp), tint = state.color)
                         Spacer(Modifier.width(10.dp))

@@ -1,17 +1,22 @@
-name: Android Build
+name: Android Release
+
 on:
   push:
     branches: [main, master]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: raingit-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  release:
+    name: Signed Release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -21,15 +26,56 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
-      - name: Install Android SDK
-        run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Build APK
-        run: gradle --no-daemon :app:assembleDebug
-      - name: Upload APK
+      - name: Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Prepare release signing
+        shell: bash
+        env:
+          SIGNING_JKS_B64: ${{ secrets.RAINGIT_KEYSTORE_BASE64 }}
+          SIGNING_PASS: ${{ secrets.RAINGIT_STORE_PASSWORD }}
+          SIGNING_ALIAS: ${{ secrets.RAINGIT_KEY_ALIAS }}
+          SIGNING_KEY_PASS: ${{ secrets.RAINGIT_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/raingit-release.jks"
+          if [[ -n "$SIGNING_JKS_B64" && -n "$SIGNING_PASS" && -n "$SIGNING_ALIAS" && -n "$SIGNING_KEY_PASS" ]]; then
+            printf '%s' "$SIGNING_JKS_B64" | base64 --decode > "$KEYSTORE"
+            echo 'Using stable release signing from repository Secrets.'
+          elif [[ -z "$SIGNING_JKS_B64" && -z "$SIGNING_PASS" && -z "$SIGNING_ALIAS" && -z "$SIGNING_KEY_PASS" ]]; then
+            SIGNING_PASS="$(openssl rand -hex 20)"
+            SIGNING_KEY_PASS="$SIGNING_PASS"
+            SIGNING_ALIAS='raingit'
+            keytool -genkeypair -noprompt -keystore "$KEYSTORE" -storetype PKCS12 -alias "$SIGNING_ALIAS" -keyalg RSA -keysize 3072 -validity 36500 -dname 'CN=RainGit,O=RainGit,C=CN' -storepass "$SIGNING_PASS" -keypass "$SIGNING_KEY_PASS" > /dev/null
+            echo '::warning::Temporary signing key: this APK is signed, but future runs cannot upgrade it unless the same key is configured in Secrets.'
+          else
+            echo '::error::Signing Secrets incomplete: provide all four RAINGIT_* secrets, or none for temporary signing.'
+            exit 1
+          fi
+          chmod 600 "$KEYSTORE"
+          echo "::add-mask::$SIGNING_PASS"
+          echo "::add-mask::$SIGNING_KEY_PASS"
+          {
+            printf 'RAINGIT_SIGNING_STORE_FILE=%s\n' "$KEYSTORE"
+            printf 'RAINGIT_SIGNING_STORE_PASSWORD=%s\n' "$SIGNING_PASS"
+            printf 'RAINGIT_SIGNING_KEY_ALIAS=%s\n' "$SIGNING_ALIAS"
+            printf 'RAINGIT_SIGNING_KEY_PASSWORD=%s\n' "$SIGNING_KEY_PASS"
+          } >> "$GITHUB_ENV"
+      - name: Build signed Release
+        run: gradle --no-daemon --max-workers=2 :app:assembleRelease
+      - name: Verify Release signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)"
+          test -n "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+      - name: Upload signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: RainGit-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: RainGit-release-${{ github.run_number }}
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14

@@ -41,6 +41,36 @@ internal fun ActionsScreen(vm: RainViewModel, export: (Artifact, Boolean) -> Uni
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            item {
+                val latest = vm.runs.firstOrNull()
+                if (latest != null) {
+                    val look = runAppearance(latest.status, latest.conclusion)
+                    Surface(
+                        onClick = { vm.chooseRun(latest) },
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(23.dp)
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(17.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(look.icon, null, Modifier.size(31.dp), tint = look.color)
+                                Spacer(Modifier.width(11.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("最新构建", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(latest.name.ifBlank { "GitHub Actions" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                StateLabel(look.name, look.color)
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Text("#${latest.number} · ${latest.branch} · ${latest.created.take(16).replace('T', ' ')}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(9.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("查看任务步骤与 APK", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Rounded.ArrowForward, null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
             item { SectionHeading("工作流", "默认分支一键运行，参数按需设置") {
                 IconButton(onClick = vm::refreshActions, enabled = !vm.busy) { Icon(Icons.Rounded.Refresh, "刷新构建") }
             } }

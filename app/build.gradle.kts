@@ -12,13 +12,26 @@ android {
         applicationId = "me.rain.git"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionName = "1.1.0"
     }
 
+    signingConfigs {
+        val signingPath = System.getenv("RAINGIT_SIGNING_STORE_FILE")
+        if (!signingPath.isNullOrBlank()) {
+            create("ciRelease") {
+                storeFile = file(signingPath)
+                storePassword = System.getenv("RAINGIT_SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("RAINGIT_SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("RAINGIT_SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.findByName("ciRelease")
         }
     }
     compileOptions {

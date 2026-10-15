@@ -34,7 +34,7 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
                 3 -> repo.privateRepo
                 else -> true
             }
-        }.sortedWith(compareByDescending<RemoteRepo> { it.fullName in vm.favoriteRepos }.thenByDescending { it.updatedAt })
+        }.sortedWith(compareByDescending<RemoteRepo> { it.fullName in vm.favoriteRepos }.thenByDescending { "${it.owner}--${it.name}" in localNames }.thenByDescending { it.updatedAt })
     }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
@@ -71,7 +71,7 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
 @Composable
 private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, actionsOnly: Boolean) {
     Card(
-        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else 0) }, modifier = Modifier.fillMaxWidth(),
+        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else if (local) 1 else 0) }, modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(21.dp)
     ) {
@@ -106,23 +106,20 @@ private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, 
             Spacer(Modifier.height(10.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { vm.openRemote(repo, if (actionsOnly) 2 else 0) }) {
-                    Icon(if (actionsOnly) Icons.Rounded.PlayArrow else Icons.Rounded.Code, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text(if (actionsOnly) "查看构建" else "代码")
-                }
-                if (!actionsOnly) TextButton(onClick = { vm.openRemote(repo, 2) }) {
-                    Icon(Icons.Rounded.Terminal, null, Modifier.size(18.dp)); Spacer(Modifier.width(5.dp)); Text("Actions")
-                }
-                Spacer(Modifier.weight(1f))
-                if (!local && !actionsOnly) {
-                    FilledTonalButton(onClick = { vm.openRemote(repo); vm.clone() }, enabled = !vm.busy,
-                        contentPadding = PaddingValues(horizontal = 12.dp)) {
-                        Icon(Icons.Rounded.Download, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("克隆")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (actionsOnly) {
+                    FilledTonalButton(onClick = { vm.openRemote(repo, 2) }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.Terminal, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(5.dp)); Text("构建记录")
                     }
                 } else {
-                    Icon(Icons.Rounded.ChevronRight, "打开", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { vm.openRemote(repo, 0) }, modifier = Modifier.weight(1f)) { Text("文件") }
+                    if (local) {
+                        FilledTonalButton(onClick = { vm.openRemote(repo, 1) }, modifier = Modifier.weight(1f)) { Text("发布") }
+                    } else {
+                        FilledTonalButton(onClick = { vm.openRemote(repo, 0); vm.clone() }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("克隆") }
+                    }
+                    TextButton(onClick = { vm.openRemote(repo, 2) }, modifier = Modifier.weight(1f)) { Text("构建") }
                 }
             }
         }
@@ -221,7 +218,7 @@ internal fun RepositoryScreen(vm: RainViewModel, export: (Artifact, Boolean) -> 
             }
         }
         TabRow(selectedTabIndex = vm.detailTab, containerColor = MaterialTheme.colorScheme.background) {
-            listOf("文件", "变更", "Actions").forEachIndexed { i, title ->
+            listOf("文件", "发布", "构建").forEachIndexed { i, title ->
                 Tab(selected = vm.detailTab == i, onClick = { vm.selectDetailTab(i) }, text = { Text(title) })
             }
         }

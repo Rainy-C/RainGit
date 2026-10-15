@@ -5,6 +5,7 @@ import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.ListBranchCommand
 import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.lib.BranchTrackingStatus
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import java.io.ByteArrayOutputStream
@@ -39,11 +40,13 @@ class LocalGit(private val token: () -> String?) {
     data class Snapshot(
         val branch: String, val staged: List<String>, val changed: List<String>,
         val untracked: List<String>, val deleted: List<String>, val conflicts: List<String>,
-        val history: List<String>, val branches: List<String>
+        val history: List<String>, val branches: List<String>,
+        val ahead: Int? = null, val behind: Int? = null
     )
 
     fun snapshot(dir: File): Snapshot = Git.open(dir).use { git ->
         val status = git.status().call()
+        val tracking = runCatching { BranchTrackingStatus.of(git.repository, git.repository.branch) }.getOrNull()
         Snapshot(
             git.repository.branch ?: "DETACHED",
             (status.added + status.changed + status.removed).sorted(),
@@ -51,7 +54,8 @@ class LocalGit(private val token: () -> String?) {
             status.conflicting.sorted(),
             git.log().setMaxCount(25).call().map { "${it.name.take(8)}  ${it.shortMessage}" },
             git.branchList().setListMode(ListBranchCommand.ListMode.ALL).call()
-                .map { it.name.removePrefix("refs/heads/").removePrefix("refs/remotes/") }.sorted()
+                .map { it.name.removePrefix("refs/heads/").removePrefix("refs/remotes/") }.sorted(),
+            tracking?.aheadCount, tracking?.behindCount
         )
     }
 

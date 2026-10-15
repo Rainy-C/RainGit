@@ -110,9 +110,16 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun <T> local(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 
+    private fun initializeAuthor(account: Account) {
+        if (store.author.isBlank()) store.author = account.login
+        if (store.email.isBlank() && account.id > 0) {
+            store.email = "${account.id}+${account.login}@users.noreply.github.com"
+        }
+    }
+
     fun refreshAccount() = launchAction {
         account = client.me()
-        if (store.author.isBlank()) store.author = account!!.login
+        initializeAuthor(account!!)
         refreshReposInner()
     }
 
@@ -132,7 +139,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         val verified = GitHubClient { cleaned }.me()
         store.saveToken(cleaned)
         account = verified
-        if (store.author.isBlank()) store.author = verified.login
+        initializeAuthor(verified)
         refreshReposInner()
         message = "已登录 ${verified.login}"
     }
@@ -157,7 +164,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
                 val verified = GitHubClient { value }.me()
                 store.saveToken(value)
                 account = verified
-                if (store.author.isBlank()) store.author = verified.login
+                initializeAuthor(verified)
                 device = null
                 codeText = null
                 refreshReposInner()
@@ -292,6 +299,56 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         }
         refreshLocalInner(dir)
         message = result
+    }
+
+    fun publishChanges(commitMessage: String) = launchAction {
+        val dir = selectedDir ?: throw IOException("请先克隆仓库")
+        require(commitMessage.isNotBlank()) { "请输入这次修改的简短说明" }
+        require(store.author.isNotBlank() && store.email.contains('@')) { "请先在设置里补全提交身份" }
+        val before = local { git.snapshot(dir) }
+        require(before.conflicts.isEmpty()) { "发现冲突文件，请先处理冲突" }
+        val dirty = (before.staged + before.changed + before.untracked + before.deleted).distinct()
+        require(dirty.isNotEmpty()) { "没有待发布的文件。可直接推送已有提交" }
+        var commitSha: String? = null
+        try {
+            local {
+                git.fetch(dir)
+                val behind = git.snapshot(dir).behind ?: 0
+                if (behind > 0) throw IOException("远端比本地多 $behind 次提交，请先同步远端再发布")
+                git.stage(dir, ".")
+                commitSha = git.commit(dir, commitMessage, store.author, store.email)
+                git.push(dir)
+            }
+            message = "已发布 $commitSha · ${dirty.size} 个文件，已切换至构建记录"
+            selectedRepo?.let { remote ->
+                detailTab = 2
+                try {
+                    workflows = client.workflows(remote)
+                    runs = client.runs(remote)
+                } catch (_: Exception) {
+                    message = "已推送成功；构建记录暂时不可获取，可手动刷新"
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (commitSha != null) {
+                message = "已提交 $commitSha，但推送失败：${e.message.orEmpty()}。请点击「推送已有提交」重试。"
+            } else {
+                message = e.message ?: "发布失败"
+            }
+        } finally {
+            refreshLocalInner(dir)
+        }
+    }
+
+    fun pushExisting() = launchAction {
+        val dir = selectedDir ?: throw IOException("请先克隆仓库")
+        try {
+            message = local { git.push(dir) }
+        } finally {
+            refreshLocalInner(dir)
+        }
     }
 
     fun showDiff(staged: Boolean) = launchAction {

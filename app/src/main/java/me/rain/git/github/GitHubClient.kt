@@ -19,7 +19,7 @@ private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 
 private val jsonType = "application/json; charset=utf-8".toMediaType()
 
-data class Account(val login: String, val displayName: String, val avatarUrl: String)
+data class Account(val login: String, val displayName: String, val avatarUrl: String, val id: Long = 0L)
 data class RemoteRepo(
     val owner: String, val name: String, val description: String, val fullName: String,
     val privateRepo: Boolean, val defaultBranch: String, val updatedAt: String
@@ -66,7 +66,7 @@ class GitHubClient(private val token: () -> String?) {
 
     suspend fun me() = withContext(Dispatchers.IO) {
         val j = JSONObject(call(endpoint("/user")))
-        Account(j.getString("login"), j.optString("name").takeUnless { it.isBlank() } ?: j.getString("login"), j.optString("avatar_url"))
+        Account(j.getString("login"), j.optString("name").takeUnless { it.isBlank() } ?: j.getString("login"), j.optString("avatar_url"), j.optLong("id"))
     }
 
     suspend fun repos(): List<RemoteRepo> = withContext(Dispatchers.IO) {

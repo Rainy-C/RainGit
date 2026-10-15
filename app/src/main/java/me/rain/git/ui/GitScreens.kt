@@ -25,134 +25,217 @@ import androidx.compose.ui.window.DialogProperties
 
 @Composable
 internal fun ChangesScreen(vm: RainViewModel) {
-    if (vm.selectedDir == null) { EmptyPanel(Icons.Rounded.AccountTree, "尚无本地仓库", "克隆后才能暂存、提交与推送"); return }
+    if (vm.selectedDir == null) {
+        EmptyPanel(Icons.Rounded.AccountTree, "先克隆仓库", "仓库保存到手机后才能编辑和发布")
+        return
+    }
     val snap = vm.snapshot
     val staged = snap?.staged.orEmpty()
     val conflicts = snap?.conflicts.orEmpty()
-    val changes = (snap?.changed.orEmpty() + snap?.untracked.orEmpty() + snap?.deleted.orEmpty() + conflicts).distinct().sorted()
+    val unstaged = (snap?.changed.orEmpty() + snap?.untracked.orEmpty() + snap?.deleted.orEmpty()).distinct().sorted()
+    val changedFiles = (staged + unstaged + conflicts).distinct().sorted()
     var commitText by remember(vm.selectedDir) { mutableStateOf("") }
-    var more by remember(vm.selectedDir) { mutableStateOf(false) }
+    var showFiles by remember(vm.selectedDir) { mutableStateOf(false) }
+    var showAdvanced by remember(vm.selectedDir) { mutableStateOf(false) }
     var branchMenu by remember(vm.selectedDir) { mutableStateOf(false) }
     var newBranch by remember(vm.selectedDir) { mutableStateOf("") }
     var switchTo by remember { mutableStateOf<String?>(null) }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.AccountTree, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(9.dp))
-                        Text(snap?.branch ?: "读取仓库中", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        StateLabel(if (conflicts.isNotEmpty()) "${conflicts.size} 个冲突" else if (changes.isEmpty() && staged.isEmpty()) "无变更" else "${(changes + staged).distinct().size} 处修改",
-                            if (conflicts.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = { vm.gitOperation("pull") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Rounded.South, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("拉取")
+    val hasChanges = changedFiles.isNotEmpty()
+    val pending = snap?.ahead ?: 0
+    val behind = snap?.behind ?: 0
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 9.dp,
+                shape = RoundedCornerShape(topStart = 23.dp, topEnd = 23.dp)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
+                    if (hasChanges) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.CloudUpload, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(8.dp))
+                            Text("发布到 GitHub", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text("${changedFiles.size} 个文件", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Button(onClick = { vm.gitOperation("push") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Rounded.North, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("推送")
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = commitText, onValueChange = { commitText = it },
+                            placeholder = { Text("例如：更新 README 文档") }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            leadingIcon = { Icon(Icons.Rounded.EditNote, null) },
+                            shape = RoundedCornerShape(15.dp)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = { vm.publishChanges(commitText) },
+                            enabled = !vm.busy && commitText.isNotBlank() && conflicts.isEmpty(),
+                            modifier = Modifier.fillMaxWidth().height(49.dp),
+                            shape = RoundedCornerShape(15.dp)
+                        ) {
+                            Icon(Icons.Rounded.CloudUpload, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(9.dp))
+                            Text("暂存全部 · 提交 · 推送")
                         }
-                        IconButton(onClick = { vm.gitOperation("fetch") }, enabled = !vm.busy) { Icon(Icons.Rounded.Sync, "Fetch") }
-                    }
-                }
-            }
-        }
-        item {
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    SectionHeading("快速提交", "${staged.size} 个文件已暂存")
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(commitText, { commitText = it }, modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("这次修改做了什么？") }, singleLine = true,
-                        label = { Text("Commit message") })
-                    Spacer(Modifier.height(10.dp))
-                    Button(onClick = { vm.gitOperation("commit", commitText) }, enabled = !vm.busy && commitText.isNotBlank() && staged.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("提交 ${staged.size} 个已暂存文件")
-                    }
-                    if (staged.isEmpty()) Text("先暂存文件，才可提交。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        item {
-            SectionHeading("待暂存", "${changes.size} 个文件") {
-                TextButton(onClick = { vm.gitOperation("stage", ".") }, enabled = !vm.busy && changes.isNotEmpty()) { Text("全部暂存") }
-            }
-        }
-        items(changes, key = { "modified-$it" }) { path ->
-            val label = when { path in conflicts -> "冲突"; path in snap?.untracked.orEmpty() -> "新增"; path in snap?.deleted.orEmpty() -> "删除"; else -> "修改" }
-            FileChangeTile(path, label, "暂存", { vm.gitOperation("stage", path) }, !vm.busy)
-        }
-        if (changes.isEmpty()) item { EmptyPanel(Icons.Rounded.CheckCircle, "没有未暂存的修改", "工作区文件已处理") }
-        item {
-            SectionHeading("已暂存", "${staged.size} 个文件") {
-                TextButton(onClick = { vm.showDiff(true) }, enabled = staged.isNotEmpty() && !vm.busy) { Text("查看 Diff") }
-            }
-        }
-        items(staged, key = { "staged-$it" }) { path -> FileChangeTile(path, "已暂存", "撤销暂存", { vm.gitOperation("unstage", path) }, !vm.busy) }
-        item {
-            TextButton(onClick = { vm.showDiff(false) }, enabled = !vm.busy) { Icon(Icons.Rounded.Difference, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("查看工作区 Diff") }
-        }
-        item {
-            HorizontalDivider()
-            ListItem(headlineContent = { Text("分支与高级操作") }, supportingContent = { Text("切换分支、创建分支、Stash、提交历史") },
-                leadingContent = { Icon(Icons.Rounded.Tune, null) },
-                trailingContent = { Icon(if (more) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null) },
-                modifier = Modifier.fillMaxWidth())
-            FilledTonalButton(onClick = { more = !more }, modifier = Modifier.fillMaxWidth()) { Text(if (more) "收起高级操作" else "展开高级操作") }
-        }
-        if (more) {
-            item {
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
-                    Column(Modifier.padding(14.dp)) {
-                        SectionHeading("分支管理", "当前：${snap?.branch.orEmpty()}")
-                        Box {
-                            OutlinedButton(onClick = { branchMenu = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text("切换分支", modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Start)
-                                Icon(Icons.Rounded.ArrowDropDown, null)
+                        Text(
+                            if (conflicts.isNotEmpty()) "存在冲突文件，发布已暂停"
+                            else "将提交所有 ${changedFiles.size} 个修改，请先确认没有敏感文件",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (conflicts.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    } else if (pending > 0) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("$pending 次提交等待推送", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                            Button(onClick = vm::pushExisting, enabled = !vm.busy) {
+                                Icon(Icons.Rounded.North, null, Modifier.size(17.dp))
+                                Spacer(Modifier.width(5.dp)); Text("推送")
                             }
-                            DropdownMenu(expanded = branchMenu, onDismissRequest = { branchMenu = false }) {
-                                snap?.branches.orEmpty().forEach { name ->
-                                    DropdownMenuItem(text = { Text(name) }, onClick = { branchMenu = false; if (name != snap?.branch) switchTo = name },
-                                        leadingIcon = if (name == snap?.branch) {{ Icon(Icons.Rounded.Check, null) }} else null)
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.CheckCircle, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(9.dp))
+                            Text("没有待发布的修改", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { vm.gitOperation("pull") }, enabled = !vm.busy) { Text("拉取更新") }
+                        }
+                    }
+                }
+            }
+        }
+    ) { inner ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(inner),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 15.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(21.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(17.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.AccountTree, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(9.dp))
+                            Text(snap?.branch ?: "正在读取...", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            StateLabel(if (conflicts.isNotEmpty()) "${conflicts.size} 个冲突" else "${changedFiles.size} 处变更",
+                                if (conflicts.isEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                        }
+                        Spacer(Modifier.height(9.dp))
+                        Text(
+                            if (snap == null) "正在扫描仓库..."
+                            else if (snap.ahead == null || snap.behind == null) "未设置上游分支，推送时会由 Git 检查远端"
+                            else "待推送 ${snap.ahead} 次提交 · 待拉取 ${snap.behind} 次提交",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (behind > 0) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("远端有新提交，建议先拉取并解决冲突后再发布", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            FilledTonalButton(onClick = { vm.gitOperation("pull") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Rounded.South, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("拉取")
+                            }
+                            OutlinedButton(onClick = { vm.gitOperation("fetch") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Rounded.Sync, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("更新状态")
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                Surface(onClick = { showFiles = !showFiles }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.FactCheck, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(11.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("变更文件", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("${unstaged.size} 个待暂存 · ${staged.size} 个已暂存", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(if (showFiles) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                    }
+                }
+            }
+            if (showFiles) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { vm.gitOperation("stage", ".") }, enabled = !vm.busy && unstaged.isNotEmpty()) { Text("全部暂存") }
+                        TextButton(onClick = { vm.showDiff(false) }, enabled = !vm.busy) { Text("查看修改") }
+                        TextButton(onClick = { vm.showDiff(true) }, enabled = !vm.busy && staged.isNotEmpty()) { Text("查看已暂存") }
+                    }
+                }
+                items(conflicts.filterNot { it in unstaged || it in staged }, key = { "conflict-$it" }) { path ->
+                    FileChangeTile(path, "冲突", "需手动解决", {}, false)
+                }
+                items(unstaged, key = { "unstaged-$it" }) { path ->
+                    FileChangeTile(path, if (path in conflicts) "冲突" else "未暂存", "暂存", { vm.gitOperation("stage", path) }, !vm.busy)
+                }
+                items(staged, key = { "staged-$it" }) { path ->
+                    FileChangeTile(path, "已暂存", "撤销暂存", { vm.gitOperation("unstage", path) }, !vm.busy)
+                }
+                if (!hasChanges) item { EmptyPanel(Icons.Rounded.CheckCircle, "工作区干净", "可以切换到文件页面修改代码") }
+            }
+            item {
+                Surface(onClick = { showAdvanced = !showAdvanced }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Tune, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(11.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Git 高级操作", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("仅提交、分支、Stash、提交历史", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(if (showAdvanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                    }
+                }
+            }
+            if (showAdvanced) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { vm.gitOperation("commit", commitText) }, enabled = staged.isNotEmpty() && commitText.isNotBlank() && !vm.busy, modifier = Modifier.weight(1f)) { Text("仅提交已暂存") }
+                        OutlinedButton(onClick = vm::pushExisting, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("仅推送") }
+                    }
+                }
+                item {
+                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                        Column(Modifier.padding(15.dp)) {
+                            SectionHeading("分支", "当前：${snap?.branch.orEmpty()}")
+                            Spacer(Modifier.height(9.dp))
+                            Box {
+                                OutlinedButton(onClick = { branchMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("切换分支", modifier = Modifier.weight(1f)); Icon(Icons.Rounded.ArrowDropDown, null)
+                                }
+                                DropdownMenu(expanded = branchMenu, onDismissRequest = { branchMenu = false }) {
+                                    snap?.branches.orEmpty().forEach { branch ->
+                                        DropdownMenuItem(text = { Text(branch) }, onClick = { branchMenu = false; if (branch != snap?.branch) switchTo = branch })
+                                    }
                                 }
                             }
-                        }
-                        Spacer(Modifier.height(9.dp))
-                        OutlinedTextField(newBranch, { newBranch = it }, modifier = Modifier.fillMaxWidth(), label = { Text("新分支名称") }, singleLine = true)
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = { vm.gitOperation("branch", newBranch) }, enabled = !vm.busy && newBranch.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("创建分支") }
-                    }
-                }
-            }
-            item {
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(20.dp)) {
-                    Column(Modifier.padding(14.dp)) {
-                        SectionHeading("临时保存", "使用 Git Stash 暂存工作区")
-                        Spacer(Modifier.height(9.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                            OutlinedButton(onClick = { vm.gitOperation("stash") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("Stash 保存") }
-                            OutlinedButton(onClick = { vm.gitOperation("apply") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("Stash 恢复") }
+                            Spacer(Modifier.height(9.dp))
+                            OutlinedTextField(newBranch, { newBranch = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("新分支名") })
+                            TextButton(onClick = { vm.gitOperation("branch", newBranch); newBranch = "" }, enabled = newBranch.isNotBlank() && !vm.busy) { Text("创建分支") }
                         }
                     }
                 }
-            }
-            item { SectionHeading("最近提交") }
-            items(snap?.history.orEmpty()) { line ->
-                Text(line, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { vm.gitOperation("stash") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("保存 Stash") }
+                        OutlinedButton(onClick = { vm.gitOperation("apply") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("恢复 Stash") }
+                    }
+                }
+                item { SectionHeading("最近提交") }
+                items(snap?.history.orEmpty()) { line ->
+                    Text(line, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                }
             }
         }
     }
-    switchTo?.let { name ->
-        AlertDialog(onDismissRequest = { switchTo = null }, title = { Text("切换到 $name？") },
-            text = { Text("请确保工作区已提交或保存。切换失败时将保留当前分支。") },
-            confirmButton = { TextButton(onClick = { vm.gitOperation("checkout", name); switchTo = null }) { Text("确认切换") } },
-            dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } })
+    switchTo?.let { branch ->
+        AlertDialog(
+            onDismissRequest = { switchTo = null }, title = { Text("切换到 $branch？") },
+            text = { Text("请确保工作区中的修改已经保存") },
+            confirmButton = { TextButton(onClick = { vm.gitOperation("checkout", branch); switchTo = null }) { Text("切换") } },
+            dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } }
+        )
     }
 }
 

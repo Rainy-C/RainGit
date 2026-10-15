@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun ChangesScreen(vm: RainViewModel) {
     if (vm.selectedDir == null) {
@@ -37,7 +38,7 @@ internal fun ChangesScreen(vm: RainViewModel) {
     val unstaged = (snap?.changed.orEmpty() + snap?.untracked.orEmpty() + snap?.deleted.orEmpty()).distinct().sorted()
     val changedFiles = (staged + unstaged + conflicts).distinct().sorted()
     var commitText by remember(vm.selectedDir) { mutableStateOf("") }
-    var showFiles by remember(vm.selectedDir) { mutableStateOf(false) }
+    var showFiles by remember(vm.selectedDir) { mutableStateOf(true) }
     var showAdvanced by remember(vm.selectedDir) { mutableStateOf(false) }
     var branchMenu by remember(vm.selectedDir) { mutableStateOf(false) }
     var newBranch by remember(vm.selectedDir) { mutableStateOf("") }
@@ -51,7 +52,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             Surface(
-                color = MaterialTheme.colorScheme.surface,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)),
                 shadowElevation = 9.dp,
                 shape = RoundedCornerShape(topStart = 23.dp, topEnd = 23.dp)
             ) {
@@ -115,7 +117,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(21.dp)) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(21.dp)) {
                     Column(Modifier.fillMaxWidth().padding(17.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.AccountTree, null, tint = MaterialTheme.colorScheme.primary)
@@ -136,7 +139,7 @@ internal fun ChangesScreen(vm: RainViewModel) {
                             Text("远端有新提交，建议先拉取并解决冲突后再发布", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                         }
                         Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             FilledTonalButton(onClick = { vm.gitOperation("pull") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
                                 Icon(Icons.Rounded.South, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("拉取")
                             }
@@ -148,7 +151,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
                 }
             }
             item {
-                Surface(onClick = { showFiles = !showFiles }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                Surface(onClick = { showFiles = !showFiles }, color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(18.dp)) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.FactCheck, null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(11.dp))
@@ -162,7 +166,7 @@ internal fun ChangesScreen(vm: RainViewModel) {
             }
             if (showFiles) {
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { vm.gitOperation("stage", ".") }, enabled = !vm.busy && unstaged.isNotEmpty()) { Text("全部暂存") }
                         TextButton(onClick = { vm.gitOperation("unstage-all") }, enabled = !vm.busy && staged.isNotEmpty()) { Text("取消暂存") }
                         TextButton(onClick = { vm.showDiff(false) }, enabled = !vm.busy) { Text("查看修改") }
@@ -188,7 +192,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
                 if (!hasChanges) item { EmptyPanel(Icons.Rounded.CheckCircle, "工作区干净", "可以切换到文件页面修改代码") }
             }
             item {
-                Surface(onClick = { showAdvanced = !showAdvanced }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                Surface(onClick = { showAdvanced = !showAdvanced }, color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(18.dp)) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Tune, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.width(11.dp))
@@ -208,7 +213,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
                     }
                 }
                 item {
-                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(18.dp)) {
                         Column(Modifier.padding(15.dp)) {
                             SectionHeading("分支", "当前：${snap?.branch.orEmpty()}")
                             Spacer(Modifier.height(9.dp))
@@ -229,7 +235,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
                     }
                 }
                 item {
-                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(18.dp)) {
                         Column(Modifier.padding(15.dp)) {
                             SectionHeading("版本标签", "为当前提交创建 Tag")
                             Spacer(Modifier.height(8.dp))
@@ -251,9 +258,17 @@ internal fun ChangesScreen(vm: RainViewModel) {
                         OutlinedButton(onClick = { vm.gitOperation("apply") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("恢复 Stash") }
                     }
                 }
-                item { SectionHeading("最近提交") }
+                item { ExtraGitTools(vm) }
+                item { SectionHeading("最近提交", "点击查看完整说明和差异") }
                 items(snap?.history.orEmpty()) { line ->
-                    Text(line, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                    Surface(onClick = { vm.showCommit(line.substringBefore(' ')) }, enabled = !vm.busy,
+                        shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Text(line.substringAfter("  "), style = MaterialTheme.typography.bodyMedium)
+                            Text(line.take(8), style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 }
             }
         }
@@ -277,7 +292,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
 
 @Composable
 private fun FileChangeTile(path: String, state: String, action: String, click: () -> Unit, enabled: Boolean) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 7.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(path, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)

@@ -25,7 +25,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import me.rain.git.github.Artifact
 
 private val forest = Color(0xFF375A48)
 private val amber = Color(0xFF946039)
@@ -59,7 +58,6 @@ fun RainApp(
     model: RainViewModel,
     onChooseDirectory: () -> Unit,
     onGrantStorage: () -> Unit,
-    onExportArtifact: (Artifact, Boolean) -> Unit,
     onOpenUrl: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -73,14 +71,14 @@ fun RainApp(
         else -> lightColors
     }
     MaterialTheme(
-        colorScheme = scheme,
+        colorScheme = scheme.copy(background = scheme.surfaceContainerLowest, surface = scheme.surfaceContainerLow),
         shapes = Shapes(small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(17.dp), large = RoundedCornerShape(23.dp), extraLarge = RoundedCornerShape(28.dp))
     ) {
         val snack = remember { SnackbarHostState() }
         LaunchedEffect(model.message) {
             val message = model.message ?: return@LaunchedEffect
-            model.clearMessage()
             snack.showSnackbar(message, withDismissAction = true)
+            if (model.message == message) model.clearMessage()
         }
         val loggedIn = model.account != null
         BackHandler(enabled = loggedIn && model.screen != "home") {
@@ -123,7 +121,7 @@ fun RainApp(
                             if (model.screen != "settings") {
                                 IconButton(onClick = {
                                     when (model.screen) {
-                                        "detail" -> if (model.detailTab == 2) model.refreshActions() else model.refreshLocal()
+                                        "detail" -> when (model.detailTab) { 2 -> model.refreshActions(); 3 -> model.refreshCollaboration(); else -> model.refreshLocal() }
                                         "local" -> model.reloadLocal()
                                         else -> model.refreshRepos()
                                     }
@@ -164,8 +162,8 @@ fun RainApp(
                         "home" -> RemoteScreen(model, actionsOnly = false)
                         "local" -> LocalScreen(model)
                         "actions" -> RemoteScreen(model, actionsOnly = true)
-                        "settings" -> SettingsScreen(model, onChooseDirectory, onGrantStorage)
-                        "detail" -> RepositoryScreen(model, onExportArtifact, onOpenUrl)
+                        "settings" -> SettingsScreen(model, onChooseDirectory, onGrantStorage, onOpenUrl)
+                        "detail" -> RepositoryScreen(model, onOpenUrl)
                     }
                 }
             }
@@ -173,99 +171,54 @@ fun RainApp(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LoginScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
     var token by remember { mutableStateOf("") }
-    var clientId by remember { mutableStateOf(vm.store.oauthClientId) }
-    var mode by remember { mutableIntStateOf(0) }
-    var advanced by remember { mutableStateOf(false) }
-    val device = vm.device
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.Start
-    ) {
-        Spacer(Modifier.height(42.dp))
-        Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-            Icon(Icons.Rounded.AccountTree, null,
-                Modifier.padding(20.dp).size(36.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
-        Spacer(Modifier.height(25.dp))
-        Text("RainGit", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text("把代码装进口袋。", style = MaterialTheme.typography.headlineSmall)
-        Text("仓库、提交和构建，都在这里。", style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(34.dp))
-        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
-            shape = RoundedCornerShape(26.dp), tonalElevation = 2.dp) {
-            Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                Text("连接 GitHub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(5.dp))
-                Text("选择一种安全的登录方式", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(16.dp))
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SegmentedButton(selected = mode == 0, onClick = { mode = 0 }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Token") }
-                    SegmentedButton(selected = mode == 1, onClick = { mode = 1 }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("浏览器授权") }
-                }
-                Spacer(Modifier.height(16.dp))
-                if (mode == 0) {
+    var showToken by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.widthIn(max = 440.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Icon(androidx.compose.ui.res.painterResource(me.rain.git.R.drawable.ic_rain_mark), null,
+                Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+            Text("RainGit", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Text("代码随行，每一滴灵感都有迹可循。", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainer,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("登录 GitHub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(token, { token = it }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp),
-                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                        visualTransformation = if (showToken) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                            if (token.isNotBlank() && !vm.busy) vm.loginWithToken(token)
+                        }),
                         label = { Text("Personal Access Token") },
-                        leadingIcon = { Icon(Icons.Rounded.Key, null) })
-                    Spacer(Modifier.height(13.dp))
-                    Button(onClick = { vm.loginWithToken(token) },
-                        enabled = !vm.busy && token.isNotBlank(),
+                        leadingIcon = { Icon(Icons.Rounded.Key, null) },
+                        trailingIcon = { IconButton(onClick = { showToken = !showToken }) {
+                            Icon(if (showToken) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                if (showToken) "隐藏 Token" else "显示 Token")
+                        } })
+                    Button(onClick = { vm.loginWithToken(token) }, enabled = !vm.busy && token.isNotBlank(),
                         modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                        Text("进入 RainGit"); Spacer(Modifier.width(8.dp)); Icon(Icons.Rounded.ArrowForward, null)
+                        Text(if (vm.busy) "正在连接…" else "登录")
                     }
                     TextButton(onClick = { openUrl("https://github.com/settings/tokens") }) {
-                        Text("还没有 Token？去创建"); Spacer(Modifier.width(5.dp)); Icon(Icons.Rounded.OpenInNew, null, Modifier.size(16.dp))
-                    }
-                } else {
-                    if (device == null) {
-                        OutlinedTextField(clientId, { clientId = it }, singleLine = true,
-                            modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp),
-                            label = { Text("OAuth Client ID") })
-                        Spacer(Modifier.height(12.dp))
-                        Button(onClick = { vm.startOAuth(clientId) },
-                            enabled = !vm.busy && clientId.isNotBlank(),
-                            modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("开始授权") }
-                    } else {
-                        Text("在浏览器输入以下授权码", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.height(9.dp))
-                        Surface(color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(15.dp)) {
-                            SelectionContainer {
-                                Text(device.userCode, Modifier.fillMaxWidth().padding(16.dp),
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer)
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Button(onClick = { openUrl(device.url) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("打开 GitHub 验证"); Spacer(Modifier.width(6.dp)); Icon(Icons.Rounded.OpenInNew, null)
-                        }
-                        TextButton(onClick = vm::cancelOAuth) { Text("取消") }
+                        Text("创建 GitHub Token"); Spacer(Modifier.width(6.dp)); Icon(Icons.Rounded.OpenInNew, null, Modifier.size(16.dp))
                     }
                 }
             }
+            Text("凭证仅加密保存在本机。访问私有仓库与构建需要相应的仓库及 Actions 权限。",
+                style = MaterialTheme.typography.bodySmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Spacer(Modifier.height(13.dp))
-        TextButton(onClick = { advanced = !advanced }) {
-            Text("关于登录与权限"); Icon(if (advanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
-        }
-        AnimatedVisibility(advanced) {
-            Text("Token 只保存在本机加密存储中。浏览器授权需要你自己的 OAuth App Client ID，双重验证由 GitHub 完成。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
-        }
-        Spacer(Modifier.height(26.dp))
     }
 }
 
@@ -305,6 +258,8 @@ internal fun runAppearance(status: String, conclusion: String): RunAppearance {
     return when {
         conclusion == "success" -> RunAppearance("成功", MaterialTheme.colorScheme.primary, Icons.Rounded.CheckCircle)
         conclusion == "failure" || conclusion == "timed_out" -> RunAppearance("失败", MaterialTheme.colorScheme.error, Icons.Rounded.Error)
+        conclusion == "skipped" -> RunAppearance("已跳过", MaterialTheme.colorScheme.onSurfaceVariant, Icons.Rounded.SkipNext)
+        conclusion == "neutral" -> RunAppearance("已完成", MaterialTheme.colorScheme.onSurfaceVariant, Icons.Rounded.CheckCircle)
         conclusion == "cancelled" -> RunAppearance("已取消", MaterialTheme.colorScheme.onSurfaceVariant, Icons.Rounded.Cancel)
         status == "in_progress" -> RunAppearance("运行中", MaterialTheme.colorScheme.secondary, Icons.Rounded.Autorenew)
         status == "queued" || status == "waiting" || status == "pending" -> RunAppearance("排队中", MaterialTheme.colorScheme.secondary, Icons.Rounded.Schedule)

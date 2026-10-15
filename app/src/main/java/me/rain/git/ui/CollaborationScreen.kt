@@ -36,7 +36,7 @@ internal fun CollaborationScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
             FilterChip(selected = vm.collaborationFilter == 0, onClick = { vm.selectCollaborationFilter(0) }, label = { Text("PR") })
             FilterChip(selected = vm.collaborationFilter == 1, onClick = { vm.selectCollaborationFilter(1) }, label = { Text("Issues") })
         }
-        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(vm.collaboration, key = { "collab-${vm.collaborationFilter}-${it.number}" }) { item ->
                 Surface(onClick = { openUrl(item.url) }, shape = RoundedCornerShape(18.dp),
                     color = MaterialTheme.colorScheme.surface) {
@@ -60,7 +60,7 @@ internal fun CollaborationScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
     }
     if (showCreate) AlertDialog(onDismissRequest = { showCreate = false },
         title = { Text("新建 Issue") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        text = { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             OutlinedTextField(title, { title = it }, label = { Text("标题") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(body, { body = it }, label = { Text("描述（可选）") },
                 modifier = Modifier.fillMaxWidth(), minLines = 3, maxLines = 7)

@@ -27,27 +27,34 @@ import kotlinx.coroutines.launch
 private enum class LogKind { ERROR, WARNING, STEP, NORMAL }
 private data class LogRow(val index: Int, val content: String, val kind: LogKind)
 
-private fun parseLog(text: String): List<LogRow> = text.lineSequence().mapIndexed { index, source ->
-    val line = source.take(1200)
-    val lower = line.lowercase()
-    val kind = when {
-        lower.contains("error:") || lower.contains("##[error]") ||
-            lower.contains("build failed") || lower.contains("exception:") ||
-            lower.contains("failed with") || lower.matches(Regex(".*> task .* failed.*")) -> LogKind.ERROR
-        lower.contains("warning:") || lower.contains("##[warning]") || lower.contains("deprecated") -> LogKind.WARNING
-        line.startsWith("── ") || lower.contains("> task :") ||
-            lower.contains("build successful") || lower.contains("##[group]") -> LogKind.STEP
-        else -> LogKind.NORMAL
+private val ansiEscape = Regex("\u001B\\[[0-9;]*[A-Za-z]")
+
+private fun parseLog(text: String): List<LogRow> {
+    val rows = java.util.ArrayDeque<LogRow>(18000)
+    text.lineSequence().forEachIndexed { index, source ->
+        val line = source.replace(ansiEscape, "").take(1200)
+        val lower = line.lowercase()
+        val kind = when {
+            lower.startsWith("e: ") || lower.contains(" e: ") || lower.contains("error:") || lower.contains("##[error]") ||
+                lower.contains("build failed") || lower.contains("exception:") || lower.contains("failed with") ||
+                (lower.contains("> task ") && lower.contains(" failed")) -> LogKind.ERROR
+            lower.contains("warning:") || lower.contains("##[warning]") || lower.contains("deprecated") -> LogKind.WARNING
+            line.startsWith("── ") || lower.contains("> task :") || lower.contains("build successful") || lower.contains("##[group]") -> LogKind.STEP
+            else -> LogKind.NORMAL
+        }
+        if (rows.size == 18000) rows.removeFirst()
+        rows.addLast(LogRow(index, line, kind))
     }
-    LogRow(index, line, kind)
-}.take(18000).toList()
+    return rows.toList()
+}
 
 @Composable
-internal fun BuildLogViewer(raw: String, onClose: () -> Unit) {
+internal fun BuildLogViewer(raw: String, onClose: () -> Unit, status: String = "", loading: Boolean = false,
+    refresh: () -> Unit = {}, openWeb: () -> Unit = {}) {
     val context = LocalContext.current
     val lines = remember(raw) { parseLog(raw) }
-    var search by remember(raw) { mutableStateOf("") }
-    var filter by remember(raw) { mutableIntStateOf(0) }
+    var search by remember { mutableStateOf("") }
+    var filter by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val errors = remember(lines) { lines.count { it.kind == LogKind.ERROR } }
@@ -58,7 +65,11 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit) {
                 (filter == 0 || (filter == 1 && it.kind == LogKind.ERROR) ||
                     (filter == 2 && it.kind == LogKind.WARNING) ||
                     (filter == 3 && it.kind == LogKind.STEP))
-        }.take(6000)
+        }.takeLast(6000)
+    }
+    var followTail by remember { mutableStateOf(true) }
+    LaunchedEffect(raw, filter, search, followTail) {
+        if (followTail && search.isBlank() && shown.isNotEmpty()) listState.scrollToItem(shown.lastIndex)
     }
     val firstProblem = shown.indexOfFirst { it.kind == LogKind.ERROR }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -72,10 +83,17 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit) {
                         fontWeight = FontWeight.SemiBold)
                     IconButton(onClick = {
                         context.getSystemService(ClipboardManager::class.java)
-                            ?.setPrimaryClip(ClipData.newPlainText("RainGit Build", raw))
-                    }) { Icon(Icons.Rounded.ContentCopy, "复制全部日志") }
+                            ?.setPrimaryClip(ClipData.newPlainText("RainGit Build", raw.takeLast(200_000)))
+                    }) { Icon(Icons.Rounded.ContentCopy, "复制日志（最多末尾 20 万字符）") }
                     IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "关闭") }
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(status, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    IconButton(onClick = refresh, enabled = !loading) { Icon(Icons.Rounded.Refresh, "刷新日志") }
+                    IconButton(onClick = openWeb) { Icon(Icons.Rounded.OpenInNew, "网页实时日志") }
+                }
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(15.dp)) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -108,10 +126,13 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit) {
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("显示 ${shown.size} 行${if (lines.size == 18000) " · 日志已截断" else ""}",
+                    Text("显示 ${shown.size} 行${if (lines.size == 18000) " · 显示末尾日志" else ""}",
                         modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (firstProblem >= 0) TextButton(onClick = { scope.launch { listState.animateScrollToItem(firstProblem) } }) {
+                    IconToggleButton(checked = followTail, onCheckedChange = { followTail = it }) {
+                        Icon(Icons.Rounded.VerticalAlignBottom, "跟随最新日志")
+                    }
+                    if (firstProblem >= 0) TextButton(onClick = { followTail = false; scope.launch { listState.animateScrollToItem(firstProblem) } }) {
                         Text("定位首个错误"); Icon(Icons.Rounded.ArrowDownward, null, Modifier.size(16.dp))
                     }
                 }

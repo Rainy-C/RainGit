@@ -49,15 +49,21 @@ class SecureStore(private val context: Context) {
         prefs.edit().putString("secret", Base64.encodeToString(encrypted, Base64.NO_WRAP)).apply()
     }
 
-    fun logout() { prefs.edit().remove("secret").apply() }
+    fun logout() { prefs.edit().remove("secret").remove("cached_login").remove("cached_name").remove("cached_id").apply() }
+
+    fun cacheAccount(account: me.rain.git.github.Account) {
+        prefs.edit().putString("cached_login", account.login).putString("cached_name", account.displayName)
+            .putLong("cached_id", account.id).apply()
+    }
+
+    fun cachedAccount(): me.rain.git.github.Account? {
+        val login = prefs.getString("cached_login", null) ?: return null
+        return me.rain.git.github.Account(login, prefs.getString("cached_name", login).orEmpty(), "", prefs.getLong("cached_id", 0))
+    }
 
     var favoriteRepos: Set<String>
         get() = prefs.getStringSet("favorite_repos", emptySet()).orEmpty().toSet()
         set(value) { prefs.edit().putStringSet("favorite_repos", value.toSet()).apply() }
-
-    var oauthClientId: String
-        get() = prefs.getString("oauth_client_id", "").orEmpty()
-        set(v) { prefs.edit().putString("oauth_client_id", v.trim()).apply() }
 
     var dynamicColor: Boolean
         get() = prefs.getBoolean("dynamic_color", true)

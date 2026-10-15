@@ -1,8 +1,8 @@
 package me.rain.git.github
 
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -38,12 +38,12 @@ data class CollaborationItem(
     val number: Int, val title: String, val state: String, val author: String,
     val url: String, val updated: String, val comments: Int, val draft: Boolean
 )
-data class DeviceCode(val code: String, val userCode: String, val url: String, val interval: Int, val expires: Int)
 
 class GitHubClient(private val token: () -> String?) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .callTimeout(35, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
 
@@ -59,7 +59,7 @@ class GitHubClient(private val token: () -> String?) {
             val text = r.body?.string().orEmpty()
             if (!r.isSuccessful) {
                 val message = runCatching { JSONObject(text).optString("message") }.getOrDefault(text.take(140))
-                throw IOException("GitHub ${r.code}: $message")
+                throw GitHubException(r.code, message, r.header("Retry-After")?.toLongOrNull() ?: 60L)
             }
             return text
         }
@@ -157,97 +157,115 @@ class GitHubClient(private val token: () -> String?) {
         call(endpoint("${repoPath(r)}/actions/runs/${run.id}/$operation"), "POST")
     }
 
-    suspend fun download(r: RemoteRepo, suffix: String, destination: File) = withContext(Dispatchers.IO) {
+    suspend fun run(r: RemoteRepo, id: Long): Run = withContext(Dispatchers.IO) {
+        val j = JSONObject(call(endpoint("${repoPath(r)}/actions/runs/$id")))
+        Run(j.getLong("id"), j.optString("name"), j.optInt("run_number"), j.optString("status"),
+            j.optString("conclusion").takeUnless { it == "null" }.orEmpty(), j.optString("head_branch"),
+            j.optString("head_sha"), j.optString("html_url"), j.optString("created_at"))
+    }
+
+    // Resolve each short-lived link at download time. Never forward the GitHub token to storage hosts.
+    suspend fun download(r: RemoteRepo, suffix: String, destination: File,
+        progress: suspend (Long, Long) -> Unit = { _, _ -> }) = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(endpoint("${repoPath(r)}$suffix"))
             .header("Authorization", "Bearer ${token() ?: throw IOException("请重新登录")}")
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "RainGit-Android")
-            .build()
+            .header("X-GitHub-Api-Version", "2026-03-10")
+            .header("User-Agent", "RainGit-Android").build()
+        val resolver = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+        val transfer = client.newBuilder().callTimeout(0, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS).followSslRedirects(false).build()
         try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("下载失败: HTTP ${response.code}")
-                val content = response.body ?: throw IOException("没有下载内容")
-                destination.outputStream().use { out ->
-                    content.byteStream().use { input ->
-                        val buffer = ByteArray(64 * 1024)
-                        var total = 0L
-                        while (true) {
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            total += n
-                            if (total > 512L * 1024 * 1024) throw IOException("归档文件超过 512 MB 限制")
-                            out.write(buffer, 0, n)
+            resolver.newCall(request).execute().use { first ->
+                val response = if (first.code in listOf(301, 302, 303, 307, 308)) {
+                    val location = first.header("Location") ?: throw IOException("下载链接为空")
+                    val url = first.request.url.resolve(location) ?: throw IOException("无效下载链接")
+                    require(url.isHttps) { "拒绝非 HTTPS 下载地址" }
+                    transfer.newCall(Request.Builder().url(url).header("User-Agent", "RainGit-Android").build()).execute()
+                } else {
+                    if (!first.isSuccessful) throw GitHubException(first.code, "下载内容尚不可用", first.header("Retry-After")?.toLongOrNull() ?: 60L)
+                    first
+                }
+                response.use { result ->
+                    if (!result.isSuccessful) throw GitHubException(result.code, "下载失败")
+                    val body = result.body ?: throw IOException("没有下载内容")
+                    val expected = body.contentLength()
+                    var total = 0L
+                    var lastUpdate = 0L
+                    destination.outputStream().buffered().use { output ->
+                        body.byteStream().use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > 1024L * 1024 * 1024) throw IOException("文件超过 1 GiB 下载上限")
+                                output.write(buffer, 0, count)
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (now - lastUpdate >= 300) { progress(total, expected); lastUpdate = now }
+                            }
                         }
                     }
+                    if (expected >= 0 && total != expected) throw IOException("下载不完整：$total / $expected 字节")
+                    progress(total, expected)
                 }
             }
-        } catch (e: Exception) {
-            destination.delete()
-            throw e
-        }
+        } catch (e: Exception) { destination.delete(); throw e }
+    }
+
+    private fun appendTail(text: StringBuilder, chunk: String, limit: Int) {
+        text.append(chunk)
+        if (text.length > limit) text.delete(0, text.length - limit)
     }
 
     suspend fun readableJobLogs(r: RemoteRepo, jobId: Long, cache: File): String = withContext(Dispatchers.IO) {
-        download(r, "/actions/jobs/$jobId/logs", cache)
         try {
+            download(r, "/actions/jobs/$jobId/logs", cache)
             require(cache.length() > 0) { "工作任务日志为空" }
-            cache.bufferedReader(Charsets.UTF_8).use { it.readText().take(1_500_000) }
+            cache.bufferedReader(Charsets.UTF_8).use { reader ->
+                val buffer = CharArray(8192)
+                val text = StringBuilder()
+                var read = 0L
+                while (true) {
+                    val count = reader.read(buffer)
+                    if (count < 0) break
+                    read += count
+                    appendTail(text, String(buffer, 0, count), 1_500_000)
+                }
+                (if (read > 1_500_000) "[长日志仅保留末尾 150 万字符]\n" else "") + text
+            }
         } finally { cache.delete() }
     }
 
     suspend fun readableLogs(r: RemoteRepo, run: Run, cache: File): String = withContext(Dispatchers.IO) {
-        download(r, "/actions/runs/${run.id}/logs", cache)
-        val text = StringBuilder()
         try {
+            download(r, "/actions/runs/${run.id}/logs", cache)
+            val text = StringBuilder()
+            var total = 0L
             ZipInputStream(cache.inputStream().buffered()).use { zip ->
                 var entry = zip.nextEntry
-                while (entry != null && text.length < 700_000) {
-                    if (!entry.isDirectory && entry.name.endsWith(".txt", ignoreCase = true)) {
-                        text.append("\n\n── ").append(entry.name.substringAfterLast('/')).append(" ──\n")
-                        val bytes = ByteArray(8192)
-                        while (text.length < 700_000) {
-                            val n = zip.read(bytes)
-                            if (n < 0) break
-                            text.append(String(bytes, 0, n, Charsets.UTF_8))
+                while (entry != null) {
+                    if (!entry.isDirectory && entry.name.endsWith(".txt", true)) {
+                        appendTail(text, "\n\n── ${entry.name} ──\n", 700_000)
+                        val reader = java.io.InputStreamReader(zip, Charsets.UTF_8)
+                        val chars = CharArray(8192)
+                        while (true) {
+                            val count = reader.read(chars)
+                            if (count < 0) break
+                            total += count
+                            require(total <= 64L * 1024 * 1024) { "日志解压内容过大，请选择单个任务查看" }
+                            appendTail(text, String(chars, 0, count), 700_000)
                         }
                     }
                     zip.closeEntry()
                     entry = zip.nextEntry
                 }
             }
-            if (text.isEmpty()) "日志压缩包中没有找到文本日志" else text.toString().take(700_000)
+            if (text.isEmpty()) "日志压缩包中没有文本日志"
+            else (if (total > 700_000) "[长日志仅保留末尾 70 万字符]\n" else "") + text
         } finally { cache.delete() }
     }
-
-    private fun oauthPost(url: String, parameters: Map<String, String>): JSONObject {
-        val form = FormBody.Builder().apply { parameters.forEach { (k, v) -> add(k, v) } }.build()
-        val request = Request.Builder().url(url).post(form).header("Accept", "application/json").build()
-        client.newCall(request).execute().use { r ->
-            val j = JSONObject(r.body?.string().orEmpty())
-            if (!r.isSuccessful) throw IOException(j.optString("error_description", "OAuth HTTP ${r.code}"))
-            return j
-        }
-    }
-
-    suspend fun startDeviceFlow(clientId: String): DeviceCode = withContext(Dispatchers.IO) {
-        require(clientId.isNotBlank()) { "请填写 GitHub OAuth Client ID" }
-        val j = oauthPost("https://github.com/login/device/code", mapOf("client_id" to clientId, "scope" to "repo workflow read:user"))
-        DeviceCode(j.getString("device_code"), j.getString("user_code"), j.getString("verification_uri"), j.optInt("interval", 5).coerceAtLeast(5), j.optInt("expires_in", 900))
-    }
-
-    suspend fun pollDevice(clientId: String, code: DeviceCode): String? = withContext(Dispatchers.IO) {
-        val j = oauthPost("https://github.com/login/oauth/access_token", mapOf(
-            "client_id" to clientId, "device_code" to code.code,
-            "grant_type" to "urn:ietf:params:oauth:grant-type:device_code"
-        ))
-        if (j.has("access_token")) return@withContext j.getString("access_token")
-        when (j.optString("error")) {
-            "authorization_pending" -> null
-            "slow_down" -> throw SlowDownException()
-            "expired_token" -> throw IOException("授权已过期，请重新获取验证码")
-            "access_denied" -> throw IOException("用户已拒绝授权")
-            else -> throw IOException(j.optString("error_description", "OAuth 授权失败"))
-        }
-    }
 }
-class SlowDownException : IOException("GitHub 要求降低轮询频率")
+
+class GitHubException(val status: Int, detail: String, val retryAfterSeconds: Long = 60L) : IOException("GitHub $status: $detail")

@@ -4,6 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import java.util.Locale
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,16 +23,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import me.rain.git.github.Artifact
 import me.rain.git.github.Run
 import me.rain.git.github.Workflow
 
 @Composable
-internal fun ActionsScreen(vm: RainViewModel, export: (Artifact, Boolean) -> Unit, openUrl: (String) -> Unit) {
+internal fun ActionsScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
     if (vm.selectedRepo == null) { EmptyPanel(Icons.Rounded.Terminal, "仅支持 GitHub 仓库", "请选择关联 GitHub 的仓库"); return }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(vm.selectedRepo?.fullName, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) { vm.pollActions(); delay(4000) }
+        }
+    }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) vm.pauseActions()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer); vm.pauseActions() }
+    }
     val chosen = vm.chosenRun
     if (chosen != null) {
-        RunScreen(vm, chosen, export, openUrl)
+        RunScreen(vm, chosen, openUrl)
     } else {
         var advancedWorkflow by remember(vm.selectedRepo) { mutableStateOf<Workflow?>(null) }
         var filter by remember { mutableIntStateOf(0) }
@@ -44,13 +61,15 @@ internal fun ActionsScreen(vm: RainViewModel, export: (Artifact, Boolean) -> Uni
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            item { Text(vm.actionsStatus, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item {
                 val latest = vm.runs.firstOrNull()
                 if (latest != null) {
                     val look = runAppearance(latest.status, latest.conclusion)
                     Surface(
                         onClick = { vm.chooseRun(latest) },
-                        color = MaterialTheme.colorScheme.surface,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)),
                         shape = RoundedCornerShape(23.dp)
                     ) {
                         Column(Modifier.fillMaxWidth().padding(17.dp)) {
@@ -79,7 +98,8 @@ internal fun ActionsScreen(vm: RainViewModel, export: (Artifact, Boolean) -> Uni
             } }
             items(vm.workflows, key = { "workflow-${it.id}" }) { workflow ->
                 val active = workflow.state == "active"
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(18.dp)) {
                     Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.PlayCircleOutline, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(11.dp))
@@ -117,7 +137,7 @@ internal fun ActionsScreen(vm: RainViewModel, export: (Artifact, Boolean) -> Uni
                 onDismissRequest = { advancedWorkflow = null },
                 title = { Text("运行 · ${w.name}") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         OutlinedTextField(ref, { ref = it }, label = { Text("分支或 Git ref") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(inputs, { inputs = it }, label = { Text("Inputs JSON（可留空）") }, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth())
                         Text("工作流需支持 workflow_dispatch。需要输入参数的工作流请填写 JSON。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -133,7 +153,8 @@ internal fun ActionsScreen(vm: RainViewModel, export: (Artifact, Boolean) -> Uni
 @Composable
 private fun RunTile(run: Run, onClick: () -> Unit, onLogs: () -> Unit, enabled: Boolean) {
     val look = runAppearance(run.status, run.conclusion)
-    Surface(onClick = onClick, enabled = enabled, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+    Surface(onClick = onClick, enabled = enabled, color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(look.icon, null, Modifier.size(23.dp), tint = look.color)
@@ -147,7 +168,7 @@ private fun RunTile(run: Run, onClick: () -> Unit, onLogs: () -> Unit, enabled: 
             Spacer(Modifier.height(9.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(run.created.take(16).replace('T', ' '), modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = onLogs, enabled = enabled && run.status == "completed") {
+                TextButton(onClick = onLogs, enabled = enabled) {
                     Icon(Icons.Rounded.Description, null, Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("日志")
                 }
                 Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -157,16 +178,22 @@ private fun RunTile(run: Run, onClick: () -> Unit, onLogs: () -> Unit, enabled: 
 }
 
 @Composable
-private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -> Unit, openUrl: (String) -> Unit) {
+private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
     val look = runAppearance(run.status, run.conclusion)
-    var expanded by remember(run.id) { mutableStateOf<Set<Long>>(emptySet()) }
+    var expanded by remember(run.id) { mutableStateOf<Map<Long, Boolean>>(emptyMap()) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(vm.actionsStatus, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                IconButton(onClick = vm::refreshActions) { Icon(Icons.Rounded.Refresh, "立即刷新") }
+            }
             TextButton(onClick = vm::backRun) { Icon(Icons.Rounded.ArrowBack, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("返回构建记录") }
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp)) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(22.dp)) {
                 Column(Modifier.padding(17.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(look.icon, null, Modifier.size(30.dp), tint = look.color)
@@ -179,8 +206,8 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
                     }
                     Spacer(Modifier.height(14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = vm::readLogs, enabled = !vm.busy && run.status == "completed", modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Rounded.Description, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("查看日志")
+                        Button(onClick = vm::readLogs, enabled = !vm.busy, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Rounded.Description, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("任务日志")
                         }
                         FilledTonalButton(onClick = { vm.controlRun("rerun") }, enabled = !vm.busy && run.status == "completed", modifier = Modifier.weight(1f)) {
                             Icon(Icons.Rounded.Refresh, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("重新运行")
@@ -195,24 +222,31 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
                 }
             }
         }
-        item { SectionHeading("任务步骤", "${vm.jobs.size} 个 Jobs · 点击可展开详细 Steps") }
+        item {
+            SectionHeading("任务步骤", "${vm.jobs.size} 个任务 · 每 4 秒检查状态")
+            if (run.status != "completed") TextButton(onClick = { openUrl(run.url) }) {
+                Icon(Icons.Rounded.OpenInNew, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("网页实时日志")
+            }
+        }
         items(vm.jobs, key = { "job-${it.id}" }) { job ->
             val state = runAppearance(job.status, job.conclusion)
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp)) {
+            val isExpanded = expanded[job.id] ?: (job.status == "in_progress")
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.animateContentSize()) {
-                    Row(Modifier.fillMaxWidth().clickable { expanded = if (job.id in expanded) expanded - job.id else expanded + job.id }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clickable { expanded = expanded + (job.id to !isExpanded) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(state.icon, null, Modifier.size(20.dp), tint = state.color)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(job.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                             Text(state.name, style = MaterialTheme.typography.labelSmall, color = state.color)
                         }
-                        if (job.status == "completed") TextButton(onClick = { vm.readJobLogs(job.id) }, enabled = !vm.busy) {
+                        TextButton(onClick = { vm.readJobLogs(job.id) }, enabled = !vm.busy) {
                             Icon(Icons.Rounded.Description, null, Modifier.size(16.dp)); Text("日志")
                         }
-                        Icon(if (job.id in expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                        Icon(if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                     }
-                    AnimatedVisibility(job.id in expanded) {
+                    AnimatedVisibility(isExpanded) {
                         Column {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         job.steps.forEach { step ->
@@ -229,18 +263,20 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
                 }
             }
         }
-        item { SectionHeading("构建产物", "${vm.artifacts.size} 个文件 · 已验证大小后下载") }
+        item { SectionHeading("构建产物", "${vm.artifacts.size} 个文件 · 直接下载到项目 / dist") }
         if (vm.downloadState != null) item {
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp)) {
                 Column(Modifier.fillMaxWidth().padding(12.dp)) {
                     Text(vm.downloadState.orEmpty(), style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
+                    TextButton(onClick = vm::cancelDownload) { Text("取消下载") }
                 }
             }
         }
         items(vm.artifacts, key = { "artifact-${it.id}" }) { artifact ->
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp)) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.fillMaxWidth().padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Inventory2, null, tint = MaterialTheme.colorScheme.primary)
@@ -251,15 +287,16 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        Button(onClick = { export(artifact, true) }, modifier = Modifier.weight(1f), enabled = !vm.busy && !artifact.expired) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { vm.downloadArtifact(artifact, true) }, modifier = Modifier.weight(1f), enabled = !vm.busy && !vm.downloading && !artifact.expired) {
                             Icon(Icons.Rounded.Android, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("下载 APK")
                         }
-                        OutlinedButton(onClick = { export(artifact, false) }, modifier = Modifier.weight(1f), enabled = !vm.busy && !artifact.expired) { Text("保存 ZIP") }
+                        OutlinedButton(onClick = { vm.downloadArtifact(artifact, false) }, modifier = Modifier.weight(1f), enabled = !vm.busy && !vm.downloading && !artifact.expired) { Text("下载 ZIP") }
                     }
                 }
             }
         }
+        vm.lastDownloadedPath?.let { path -> item { DownloadedFileCard(path) } }
         if (vm.artifacts.isEmpty()) item { EmptyPanel(Icons.Rounded.Archive, "暂无构建产物", "工作流成功上传 Artifact 后将显示在这里") }
     }
 }

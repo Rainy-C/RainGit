@@ -17,6 +17,26 @@ class LocalGit(private val token: () -> String?) {
         "x-access-token", token() ?: throw IOException("GitHub 登录已失效")
     )
 
+    // JGit 6.10's automatic GC uses java.lang.ProcessHandle, unavailable on Android.
+    // Both limits must be disabled: JGit checks pack count separately from loose objects.
+    // Keep this in sync with the targeted ProcessHandle rule in proguard-rules.pro.
+    private fun openGit(dir: File): Git {
+        val git = Git.open(dir)
+        try {
+            val config = git.repository.config
+            if (config.getString("gc", null, "auto") != "0" ||
+                config.getString("gc", null, "autoPackLimit") != "0") {
+                config.setInt("gc", null, "auto", 0)
+                config.setInt("gc", null, "autoPackLimit", 0)
+                config.save()
+            }
+            return git
+        } catch (error: Exception) {
+            git.close()
+            throw error
+        }
+    }
+
     fun directory(root: File, repo: RemoteRepo): File {
         require(Regex("[A-Za-z0-9_.-]+").matches(repo.owner) && Regex("[A-Za-z0-9_.-]+").matches(repo.name))
         return File(root, "${repo.owner}--${repo.name}")
@@ -31,7 +51,12 @@ class LocalGit(private val token: () -> String?) {
         val temporary = File(root, ".rain-clone-${java.util.UUID.randomUUID()}")
         try {
             Git.cloneRepository().setURI(repo.cloneUrl).setDirectory(temporary)
-                .setCredentialsProvider(auth()).setCloneAllBranches(true).call().use { }
+                .setCredentialsProvider(auth()).setCloneAllBranches(true)
+                // Clone initializes its repository before invoking this callback.
+                // Persist the limits before its first fetch can trigger autoGC;
+                // FileRepository.getConfig() reloads the changed config from disk.
+                .setTransportConfigCallback { openGit(temporary).close() }
+                .call().use { }
             val oldDist = File(dir, "dist")
             require(!oldDist.exists() || !File(temporary, "dist").exists()) {
                 "远端仓库包含 dist，请先移动本地下载目录后重试"
@@ -63,7 +88,7 @@ class LocalGit(private val token: () -> String?) {
 
     data class StashEntry(val id: String, val name: String)
 
-    fun snapshot(dir: File): Snapshot = Git.open(dir).use { git ->
+    fun snapshot(dir: File): Snapshot = openGit(dir).use { git ->
         val status = git.status().call()
         val tracking = runCatching { BranchTrackingStatus.of(git.repository, git.repository.branch) }.getOrNull()
         Snapshot(
@@ -80,18 +105,18 @@ class LocalGit(private val token: () -> String?) {
         )
     }
 
-    fun fetch(dir: File) = Git.open(dir).use { git ->
+    fun fetch(dir: File) = openGit(dir).use { git ->
         git.fetch().setCredentialsProvider(auth()).call()
         "Fetch 完成"
     }
 
-    fun pull(dir: File): String = Git.open(dir).use { git ->
+    fun pull(dir: File): String = openGit(dir).use { git ->
         val result = git.pull().setCredentialsProvider(auth()).call()
         if (!result.isSuccessful) throw IOException("Pull 未成功，请检查合并冲突")
         "Pull 成功"
     }
 
-    fun push(dir: File): String = Git.open(dir).use { git ->
+    fun push(dir: File): String = openGit(dir).use { git ->
         val branch = git.repository.fullBranch
         require(branch != null && branch.startsWith(Constants.R_HEADS)) { "请先切换到本地分支" }
         val results = git.push().setRemote("origin").setRefSpecs(org.eclipse.jgit.transport.RefSpec("$branch:$branch"))
@@ -110,7 +135,7 @@ class LocalGit(private val token: () -> String?) {
         "Push 完成"
     }
 
-    fun stage(dir: File, path: String): Unit = Git.open(dir).use { git ->
+    fun stage(dir: File, path: String): Unit = openGit(dir).use { git ->
         excludeDist(dir)
         require(path != "dist" && !path.startsWith("dist/")) { "dist 是下载专用目录，不能暂存" }
         val status = git.status().call()
@@ -131,12 +156,12 @@ class LocalGit(private val token: () -> String?) {
         }
     }
 
-    fun unstage(dir: File, path: String): Unit = Git.open(dir).use { git ->
+    fun unstage(dir: File, path: String): Unit = openGit(dir).use { git ->
         if (git.repository.resolve("HEAD") == null) git.rm().setCached(true).addFilepattern(path).call()
         else git.reset().addPath(path).call()
     }
 
-    fun unstageAll(dir: File): Unit = Git.open(dir).use { git ->
+    fun unstageAll(dir: File): Unit = openGit(dir).use { git ->
         if (git.repository.resolve("HEAD") == null) {
             val index = git.repository.readDirCache()
             val paths = (0 until index.entryCount).map { index.getEntry(it).pathString }
@@ -144,7 +169,7 @@ class LocalGit(private val token: () -> String?) {
         } else git.reset().call()
     }
 
-    fun discard(dir: File, path: String): Unit = Git.open(dir).use { git ->
+    fun discard(dir: File, path: String): Unit = openGit(dir).use { git ->
         require(path.isNotBlank() && path != "." && !path.startsWith('/') &&
             path.split('/').none { it == ".." }) { "非法文件路径" }
         val status = git.status().call()
@@ -155,12 +180,12 @@ class LocalGit(private val token: () -> String?) {
         git.checkout().addPath(path).call()
     }
 
-    fun createTag(dir: File, tag: String): Unit = Git.open(dir).use { git ->
+    fun createTag(dir: File, tag: String): Unit = openGit(dir).use { git ->
         require(org.eclipse.jgit.lib.Repository.isValidRefName("refs/tags/$tag")) { "标签名称不合法" }
         git.tag().setName(tag).setMessage("Release $tag").call()
     }
 
-    fun pushTags(dir: File): String = Git.open(dir).use { git ->
+    fun pushTags(dir: File): String = openGit(dir).use { git ->
         val results = git.push().setPushTags().setCredentialsProvider(auth()).call()
         val failed = results.flatMap { it.remoteUpdates }.filter {
             it.status != org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK &&
@@ -170,7 +195,7 @@ class LocalGit(private val token: () -> String?) {
         "标签已推送"
     }
 
-    fun commit(dir: File, message: String, name: String, email: String): String = Git.open(dir).use { git ->
+    fun commit(dir: File, message: String, name: String, email: String): String = openGit(dir).use { git ->
         require(message.isNotBlank()) { "提交说明不能为空" }
         require(name.isNotBlank() && email.contains('@')) { "请在设置中填写 Git 作者和邮箱" }
         val status = git.status().call()
@@ -181,12 +206,12 @@ class LocalGit(private val token: () -> String?) {
             .setCommitter(name.trim(), email.trim()).call().name.take(10)
     }
 
-    fun createBranch(dir: File, branch: String): Unit = Git.open(dir).use { git ->
+    fun createBranch(dir: File, branch: String): Unit = openGit(dir).use { git ->
         require(org.eclipse.jgit.lib.Repository.isValidRefName("refs/heads/$branch")) { "分支名称不合法" }
         git.branchCreate().setName(branch).call()
     }
 
-    fun checkout(dir: File, branch: String): Unit = Git.open(dir).use { git ->
+    fun checkout(dir: File, branch: String): Unit = openGit(dir).use { git ->
         require(git.status().call().isClean) { "切换分支前请提交修改或保存到 Stash" }
         val locals = git.branchList().call().map { it.name.removePrefix(Constants.R_HEADS) }
         if (branch in locals) git.checkout().setName(branch).call()
@@ -198,7 +223,7 @@ class LocalGit(private val token: () -> String?) {
         }
     }
 
-    fun stash(dir: File): String = Git.open(dir).use { git ->
+    fun stash(dir: File): String = openGit(dir).use { git ->
         excludeDist(dir)
         require(git.status().call().untracked.none { it == "dist" || it.startsWith("dist/") }) {
             "仓库忽略规则重新包含了 dist，请先移除针对 dist 的反向规则"
@@ -206,12 +231,12 @@ class LocalGit(private val token: () -> String?) {
         git.stashCreate().setIncludeUntracked(true).call()?.name?.take(10) ?: "没有可暂存的变更"
     }
 
-    fun applyStash(dir: File): String = Git.open(dir).use { git ->
+    fun applyStash(dir: File): String = openGit(dir).use { git ->
         require(git.status().call().isClean) { "恢复前请提交修改或保存 Stash" }
         git.stashApply().call()?.name?.take(10) ?: "没有 Stash"
     }
 
-    fun diff(dir: File, cached: Boolean): String = Git.open(dir).use { git ->
+    fun diff(dir: File, cached: Boolean): String = openGit(dir).use { git ->
         val out = ByteArrayOutputStream()
         DiffFormatter(out).use { formatter ->
             formatter.setRepository(git.repository)
@@ -260,9 +285,9 @@ class LocalGit(private val token: () -> String?) {
         file.writeText(content, Charsets.UTF_8)
     }
 
-    fun remoteUrl(dir: File): String = Git.open(dir).use { it.repository.config.getString("remote", "origin", "url").orEmpty() }
+    fun remoteUrl(dir: File): String = openGit(dir).use { it.repository.config.getString("remote", "origin", "url").orEmpty() }
 
-    fun configureAuthor(dir: File, name: String, email: String): Unit = Git.open(dir).use { git ->
+    fun configureAuthor(dir: File, name: String, email: String): Unit = openGit(dir).use { git ->
         if (name.isNotBlank() && email.contains('@')) git.repository.config.apply {
             setString("user", null, "name", name.trim())
             setString("user", null, "email", email.trim())
@@ -272,9 +297,10 @@ class LocalGit(private val token: () -> String?) {
 
     fun excludeDist(dir: File) {
         if (!isRepo(dir)) return
-        Git.open(dir).use { git ->
+        openGit(dir).use { git ->
             val exclude = File(git.repository.directory, "info/exclude")
-            require(exclude.parentFile.isDirectory || exclude.parentFile.mkdirs()) { "无法创建 Git 排除目录" }
+            val parent = requireNotNull(exclude.parentFile) { "Git 排除目录无效" }
+            require(parent.isDirectory || parent.mkdirs()) { "无法创建 Git 排除目录" }
             val old = if (exclude.exists()) exclude.readText() else ""
             if (old.lineSequence().none { it.trim() == "/dist/" }) exclude.appendText("\n/dist/\n")
         }
@@ -283,7 +309,7 @@ class LocalGit(private val token: () -> String?) {
     fun downloadDirectory(dir: File): File {
         require(dir.isDirectory || dir.mkdirs()) { "项目目录不可写" }
         if (isRepo(dir)) {
-            Git.open(dir).use { git ->
+            openGit(dir).use { git ->
                 val index = git.repository.readDirCache()
                 require((0 until index.entryCount).none { index.getEntry(it).pathString.let { p -> p == "dist" || p.startsWith("dist/") } }) {
                     "该仓库已跟踪 dist，下载已停止。请先将 dist 从 Git 索引中移除。"
@@ -307,7 +333,7 @@ class LocalGit(private val token: () -> String?) {
         return dir
     }
 
-    fun setRemote(dir: File, url: String) = Git.open(dir).use { git ->
+    fun setRemote(dir: File, url: String) = openGit(dir).use { git ->
         require(Regex("https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\\.git)?").matches(url)) { "请填写 GitHub HTTPS 仓库地址" }
         git.repository.config.apply {
             setString("remote", "origin", "url", url)
@@ -316,7 +342,7 @@ class LocalGit(private val token: () -> String?) {
         }
     }
 
-    fun merge(dir: File, branch: String): String = Git.open(dir).use { git ->
+    fun merge(dir: File, branch: String): String = openGit(dir).use { git ->
         require(git.status().call().isClean) { "合并前请提交修改或保存 Stash" }
         val ref = git.repository.findRef(branch) ?: throw IOException("分支不存在")
         val result = git.merge().include(ref).call()
@@ -324,31 +350,31 @@ class LocalGit(private val token: () -> String?) {
         "合并完成：$branch"
     }
 
-    fun abortMerge(dir: File): Unit = Git.open(dir).use { git ->
+    fun abortMerge(dir: File): Unit = openGit(dir).use { git ->
         require(git.repository.repositoryState == org.eclipse.jgit.lib.RepositoryState.MERGING ||
             git.repository.repositoryState == org.eclipse.jgit.lib.RepositoryState.MERGING_RESOLVED) { "当前没有进行中的合并" }
         git.reset().setMode(org.eclipse.jgit.api.ResetCommand.ResetType.HARD).setRef("HEAD").call()
     }
 
-    fun deleteBranch(dir: File, branch: String): Unit = Git.open(dir).use { git ->
+    fun deleteBranch(dir: File, branch: String): Unit = openGit(dir).use { git ->
         require(branch != git.repository.branch) { "不能删除当前分支" }
         require(git.branchList().call().any { it.name == "refs/heads/$branch" }) { "只支持删除本地分支" }
         git.branchDelete().setBranchNames(branch).setForce(false).call()
     }
 
-    fun restoreStash(dir: File, id: String): Unit = Git.open(dir).use { git ->
+    fun restoreStash(dir: File, id: String): Unit = openGit(dir).use { git ->
         require(git.status().call().isClean) { "恢复前请提交当前修改或保存 Stash" }
         require(git.stashList().call().any { it.name == id }) { "Stash 不存在" }
         git.stashApply().setStashRef(id).call()
     }
 
-    fun dropStash(dir: File, id: String): Unit = Git.open(dir).use { git ->
+    fun dropStash(dir: File, id: String): Unit = openGit(dir).use { git ->
         val index = git.stashList().call().toList().indexOfFirst { it.name == id }
         require(index >= 0) { "Stash 不存在" }
         git.stashDrop().setStashRef(index).call()
     }
 
-    fun commitDetails(dir: File, id: String): String = Git.open(dir).use { git ->
+    fun commitDetails(dir: File, id: String): String = openGit(dir).use { git ->
         org.eclipse.jgit.revwalk.RevWalk(git.repository).use { walk ->
             val commit = walk.parseCommit(git.repository.resolve(id) ?: throw IOException("提交不存在"))
             val output = ByteArrayOutputStream()
@@ -370,7 +396,8 @@ class LocalGit(private val token: () -> String?) {
     fun createFile(dir: File, path: String) {
         val target = within(dir, path.trim())
         require(!target.exists()) { "文件已存在" }
-        require(target.parentFile.isDirectory || target.parentFile.mkdirs()) { "无法创建目录" }
+        val parent = requireNotNull(target.parentFile) { "目标目录无效" }
+        require(parent.isDirectory || parent.mkdirs()) { "无法创建目录" }
         require(target.createNewFile()) { "无法创建文件" }
     }
 
@@ -378,7 +405,8 @@ class LocalGit(private val token: () -> String?) {
         val old = within(dir, path)
         val target = within(dir, destination.trim())
         require(old.isFile && !target.exists()) { "原文件不存在或目标已存在" }
-        require(target.parentFile.isDirectory || target.parentFile.mkdirs()) { "无法创建目录" }
+        val parent = requireNotNull(target.parentFile) { "目标目录无效" }
+        require(parent.isDirectory || parent.mkdirs()) { "无法创建目录" }
         require(old.renameTo(target)) { "重命名失败" }
     }
 

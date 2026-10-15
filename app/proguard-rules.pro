@@ -23,3 +23,9 @@
 -dontwarn javax.management.**
 -dontwarn java.lang.management.**
 -dontwarn org.ietf.jgss.**
+
+# Android has no ProcessHandle. LocalGit.openGit disables both gc.auto and
+# gc.autoPackLimit, including before the initial clone fetch, so JGit's
+# GC.PidLock path is never used by this app. Do not enable manual/automatic
+# JGit GC without providing an Android-compatible PID implementation first.
+-dontwarn java.lang.ProcessHandle

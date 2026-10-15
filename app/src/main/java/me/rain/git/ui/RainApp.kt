@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
+
 package me.rain.git.ui
 
 import androidx.compose.animation.*
@@ -116,11 +118,13 @@ fun RainApp(
             Column(Modifier.padding(padding).consumeWindowInsets(padding).imePadding().fillMaxSize()) {
                 WaveLoadingBar(model.busy, Modifier.fillMaxWidth())
                 if (!loggedIn) LoginScreen(model, onOpenUrl)
-                else AnimatedContent(
+                else SharedTransitionLayout(Modifier.weight(1f)) {
+                    AnimatedContent(
                     targetState = model.screen,
                     transitionSpec = {
                         if (targetState == "detail" || initialState == "detail") {
-                            fadeIn(tween(115)) togetherWith fadeOut(tween(75))
+                            // repository-shared-bounds: matched card carries the motion; scene content only fades.
+                            fadeIn(tween(260, delayMillis = 30)) togetherWith fadeOut(tween(125))
                         } else {
                             val pages = listOf("home", "local", "actions", "settings")
                             val forward = pages.indexOf(targetState) > pages.indexOf(initialState)
@@ -128,17 +132,18 @@ fun RainApp(
                                 (fadeOut(tween(120)) + slideOutHorizontally(tween(220)) { if (forward) -it / 12 else it / 12 })
                         }
                     },
-                    label = "screen", modifier = Modifier.weight(1f)
+                    label = "screen", modifier = Modifier.fillMaxSize()
                 ) { page ->
                     pageState.SaveableStateProvider(page) {
                         when (page) {
-                            "home" -> RemoteScreen(model, actionsOnly = false)
+                            "home" -> RemoteScreen(model, actionsOnly = false, sharedScope = this@SharedTransitionLayout, visibilityScope = this@AnimatedContent)
                             "local" -> LocalScreen(model)
-                            "actions" -> RemoteScreen(model, actionsOnly = true)
+                            "actions" -> RemoteScreen(model, actionsOnly = true, sharedScope = this@SharedTransitionLayout, visibilityScope = this@AnimatedContent)
                             "settings" -> SettingsScreen(model, onChooseDirectory, onGrantStorage, onOpenUrl)
-                            "detail" -> RepositoryScreen(model, onOpenUrl)
+                            "detail" -> RepositoryScreen(model, onOpenUrl, sharedScope = this@SharedTransitionLayout, visibilityScope = this@AnimatedContent)
                         }
                     }
+                }
                 }
             }
         }

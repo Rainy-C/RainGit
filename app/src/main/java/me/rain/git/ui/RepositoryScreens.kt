@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
+
 package me.rain.git.ui
 
 import androidx.compose.foundation.clickable
@@ -25,7 +27,12 @@ import androidx.compose.ui.unit.dp
 import me.rain.git.github.RemoteRepo
 
 @Composable
-internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
+internal fun RemoteScreen(
+    vm: RainViewModel,
+    actionsOnly: Boolean,
+    sharedScope: SharedTransitionScope? = null,
+    visibilityScope: AnimatedVisibilityScope? = null
+) {
     var search by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable(actionsOnly) { mutableIntStateOf(0) }
     val localNames = remember(vm.localDirs) { vm.localDirs.map { it.name }.toSet() }
@@ -63,7 +70,7 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 5.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             items(filtered, key = { it.fullName }) { repo ->
                 val local = vm.localDirs.any { it.name == "${repo.owner}--${repo.name}" }
-                RepositoryTile(vm, repo, local, actionsOnly)
+                RepositoryTile(vm, repo, local, actionsOnly, sharedScope, visibilityScope)
             }
             if (filtered.isEmpty()) item {
                 EmptyPanel(Icons.Rounded.FolderOff, "这里还没有仓库", if (search.isNotBlank() || filter != 0) "尝试更换搜索条件" else "点击右上角刷新同步 GitHub 仓库")
@@ -73,11 +80,25 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
 }
 
 @Composable
-private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, actionsOnly: Boolean) {
+private fun RepositoryTile(
+    vm: RainViewModel, repo: RemoteRepo, local: Boolean, actionsOnly: Boolean,
+    sharedScope: SharedTransitionScope?, visibilityScope: AnimatedVisibilityScope?
+) {
     val favored = repo.fullName in vm.favoriteRepos
+    // Matches the detail hero using the remote repository's stable full name.
+    val cardMotion = if (sharedScope != null && visibilityScope != null) {
+        with(sharedScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState(key = "repository-${repo.fullName}"),
+                animatedVisibilityScope = visibilityScope,
+                boundsTransform = BoundsTransform { _, _ -> tween(260) },
+                resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds
+            )
+        }
+    } else Modifier
     Card(
         onClick = { vm.openRemote(repo, if (actionsOnly) 2 else 0) },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = cardMotion.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
         shape = RoundedCornerShape(18.dp)
@@ -284,33 +305,88 @@ internal fun SettingsScreen(vm: RainViewModel, pickDir: () -> Unit, grant: () ->
 }
 
 @Composable
-internal fun RepositoryScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
+internal fun RepositoryScreen(
+    vm: RainViewModel, openUrl: (String) -> Unit,
+    sharedScope: SharedTransitionScope? = null,
+    visibilityScope: AnimatedVisibilityScope? = null
+) {
     val tabState = rememberSaveableStateHolder()
     val repositoryKey = vm.selectedRepo?.fullName ?: vm.selectedDir?.path.orEmpty()
+    // Retain the matched repository while the reverse transition is running.
+    // closeDetail() clears selectedRepo before the outgoing scene is disposed.
+    val transitionRepo = remember { vm.selectedRepo }
     Column(Modifier.fillMaxSize()) {
         val dir = vm.selectedDir
-        if (dir == null && vm.selectedRepo != null && vm.detailTab < 2) {
-            Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.CloudDownload, null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("仓库尚未克隆", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
-                        Text("克隆后可编辑、提交和推送", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val currentRepo = vm.selectedRepo ?: transitionRepo
+        if (currentRepo != null) {
+            val sharedHeader = if (sharedScope != null && visibilityScope != null && transitionRepo != null) {
+                with(sharedScope) {
+                    Modifier.sharedBounds(
+                        sharedContentState = rememberSharedContentState(key = "repository-${transitionRepo.fullName}"),
+                        animatedVisibilityScope = visibilityScope,
+                        boundsTransform = BoundsTransform { _, _ -> tween(260) },
+                        resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds
+                    )
+                }
+            } else Modifier
+            Surface(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).then(sharedHeader).fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .7f)),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(13.dp)) {
+                            Icon(Icons.Rounded.Folder, null, Modifier.padding(10.dp).size(21.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(currentRepo.name, style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(currentRepo.owner, style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (dir != null) StateLabel("已克隆") else if (currentRepo.privateRepo) StateLabel("私有")
                     }
-                    Button(onClick = vm::clone, enabled = !vm.busy && !vm.downloading) { Text("克隆") }
+                    if (currentRepo.description.isNotBlank()) {
+                        Spacer(Modifier.height(9.dp))
+                        Text(currentRepo.description, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.AccountTree, null, Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(7.dp))
+                        Text(vm.snapshot?.branch ?: currentRepo.defaultBranch, Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        if (dir == null && vm.screen == "detail" && !vm.busy && !vm.downloading) {
+                            TextButton(onClick = vm::clone) { Text("克隆") }
+                        } else if (dir != null && vm.snapshot != null) {
+                            val snap = vm.snapshot!!
+                            val changes = (snap.staged + snap.changed + snap.untracked + snap.deleted + snap.conflicts).distinct().size
+                            if (changes > 0) StateLabel("$changes 处变更")
+                        }
+                    }
                 }
             }
         } else if (dir != null && vm.detailTab != 1) {
             val s = vm.snapshot
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp).fillMaxWidth()) {
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)),
+                shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp).fillMaxWidth()) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.AccountTree, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
-                    Text(s?.branch ?: "本地仓库", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                    Text(s?.branch ?: "本地仓库", Modifier.weight(1f), maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
                     val total = (s?.staged.orEmpty() + s?.changed.orEmpty() + s?.untracked.orEmpty() + s?.deleted.orEmpty() + s?.conflicts.orEmpty()).distinct().size
-                    StateLabel(if (s == null) "尚未读取" else if (total == 0) "工作区干净" else "$total 处变更", if (total == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary)
+                    StateLabel(if (s == null) "尚未读取" else if (total == 0) "工作区干净" else "$total 处变更",
+                        if (total == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary)
                 }
             }
         }

@@ -33,8 +33,8 @@ internal fun CollaborationScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
             }
         }
         Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = vm.collaborationFilter == 0, onClick = { vm.setCollaborationFilter(0) }, label = { Text("PR") })
-            FilterChip(selected = vm.collaborationFilter == 1, onClick = { vm.setCollaborationFilter(1) }, label = { Text("Issues") })
+            FilterChip(selected = vm.collaborationFilter == 0, onClick = { vm.selectCollaborationFilter(0) }, label = { Text("PR") })
+            FilterChip(selected = vm.collaborationFilter == 1, onClick = { vm.selectCollaborationFilter(1) }, label = { Text("Issues") })
         }
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             items(vm.collaboration, key = { "collab-${vm.collaborationFilter}-${it.number}" }) { item ->

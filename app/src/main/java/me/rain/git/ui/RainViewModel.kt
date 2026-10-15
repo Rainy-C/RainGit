@@ -90,7 +90,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setDynamicColor(v: Boolean) { store.dynamicColor = v; dynamicColorEnabled = v }
     fun setTheme(v: Int) { store.themeMode = v; themeMode = v }
-    fun setCollaborationFilter(value: Int) { collaborationFilter = value.coerceIn(0, 1); refreshCollaboration() }
+    fun selectCollaborationFilter(value: Int) { collaborationFilter = value.coerceIn(0, 1); refreshCollaboration() }
     fun clearMessage() { message = null }
     fun closeLog() { logText = null }
     fun closeDiff() { diffText = null }

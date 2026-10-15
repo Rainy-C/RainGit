@@ -59,6 +59,14 @@ class SecureStore(private val context: Context) {
         get() = prefs.getString("oauth_client_id", "").orEmpty()
         set(v) { prefs.edit().putString("oauth_client_id", v.trim()).apply() }
 
+    var dynamicColor: Boolean
+        get() = prefs.getBoolean("dynamic_color", true)
+        set(v) { prefs.edit().putBoolean("dynamic_color", v).apply() }
+
+    var themeMode: Int
+        get() = prefs.getInt("theme_mode", 0)
+        set(v) { prefs.edit().putInt("theme_mode", v.coerceIn(0, 2)).apply() }
+
     var author: String
         get() = prefs.getString("author", "").orEmpty()
         set(v) { prefs.edit().putString("author", v).apply() }

@@ -72,10 +72,18 @@ jobs:
           APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -n 1)"
           test -n "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          unzip -t "$APK" >/dev/null
+          APK_BYTES="$(stat -c%s "$APK")"
+          if (( APK_BYTES < 1048576 )); then
+            echo "::error::Release APK is unexpectedly small ($APK_BYTES bytes)."
+            exit 1
+          fi
+          echo "Release APK: $APK_BYTES bytes ($(du -h "$APK" | cut -f1))"
       - name: Upload signed Release APK
         uses: actions/upload-artifact@v4
         with:
           name: RainGit-release-${{ github.run_number }}
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14

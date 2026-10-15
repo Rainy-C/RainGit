@@ -1,6 +1,10 @@
 package me.rain.git.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.platform.LocalContext
+import android.os.Build
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -58,9 +62,18 @@ fun RainApp(
     onExportArtifact: (Artifact, Boolean) -> Unit,
     onOpenUrl: (String) -> Unit
 ) {
-    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val context = LocalContext.current
+    val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val dark = when (model.themeMode) { 1 -> false; 2 -> true; else -> systemDark }
+    val dynamic = model.dynamicColorEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val scheme = when {
+        dynamic && dark -> dynamicDarkColorScheme(context)
+        dynamic -> dynamicLightColorScheme(context)
+        dark -> darkColors
+        else -> lightColors
+    }
     MaterialTheme(
-        colorScheme = if (dark) darkColors else lightColors,
+        colorScheme = scheme,
         shapes = Shapes(small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(17.dp), large = RoundedCornerShape(23.dp), extraLarge = RoundedCornerShape(28.dp))
     ) {
         val snack = remember { SnackbarHostState() }
@@ -142,73 +155,117 @@ fun RainApp(
             Column(Modifier.padding(padding).fillMaxSize()) {
                 if (model.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (!loggedIn) LoginScreen(model, onOpenUrl)
-                else when (model.screen) {
-                    "home" -> RemoteScreen(model, actionsOnly = false)
-                    "local" -> LocalScreen(model)
-                    "actions" -> RemoteScreen(model, actionsOnly = true)
-                    "settings" -> SettingsScreen(model, onChooseDirectory, onGrantStorage)
-                    "detail" -> RepositoryScreen(model, onExportArtifact, onOpenUrl)
+                else AnimatedContent(
+                    targetState = model.screen,
+                    transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(120)) },
+                    label = "screen"
+                ) { page ->
+                    when (page) {
+                        "home" -> RemoteScreen(model, actionsOnly = false)
+                        "local" -> LocalScreen(model)
+                        "actions" -> RemoteScreen(model, actionsOnly = true)
+                        "settings" -> SettingsScreen(model, onChooseDirectory, onGrantStorage)
+                        "detail" -> RepositoryScreen(model, onExportArtifact, onOpenUrl)
+                    }
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LoginScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
     var token by remember { mutableStateOf("") }
     var clientId by remember { mutableStateOf(vm.store.oauthClientId) }
     var mode by remember { mutableIntStateOf(0) }
+    var advanced by remember { mutableStateOf(false) }
+    val device = vm.device
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.Start
     ) {
-        Spacer(Modifier.height(36.dp))
-        Box(
-            Modifier.size(64.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(22.dp)),
-            contentAlignment = Alignment.Center
-        ) { Icon(Icons.Rounded.AccountTree, null, Modifier.size(34.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer) }
-        Spacer(Modifier.height(22.dp))
-        Text("代码，随时掌控。", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text("Git 仓库与 Actions，都在 RainGit。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(26.dp))
-        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(24.dp)) {
-            Column(Modifier.padding(18.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("Token 登录") }, leadingIcon = if (mode == 0) {{ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }} else null)
-                    FilterChip(selected = mode == 1, onClick = { mode = 1 }, label = { Text("浏览器授权") }, leadingIcon = if (mode == 1) {{ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }} else null)
+        Spacer(Modifier.height(42.dp))
+        Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+            Icon(Icons.Rounded.AccountTree, null,
+                Modifier.padding(20.dp).size(36.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        Spacer(Modifier.height(25.dp))
+        Text("RainGit", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text("把代码装进口袋。", style = MaterialTheme.typography.headlineSmall)
+        Text("仓库、提交和构建，都在这里。", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(34.dp))
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = RoundedCornerShape(26.dp), tonalElevation = 2.dp) {
+            Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                Text("连接 GitHub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(5.dp))
+                Text("选择一种安全的登录方式", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(16.dp))
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    SegmentedButton(selected = mode == 0, onClick = { mode = 0 }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Token") }
+                    SegmentedButton(selected = mode == 1, onClick = { mode = 1 }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("浏览器授权") }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 if (mode == 0) {
-                    OutlinedTextField(
-                        token, { token = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                        visualTransformation = PasswordVisualTransformation(), label = { Text("GitHub Personal Access Token") }
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text("Classic Token 建议 repo、workflow 权限；细粒度 Token 按需授权 Contents 与 Actions。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(16.dp))
-                    Button(onClick = { vm.loginWithToken(token) }, enabled = !vm.busy && token.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("连接 GitHub") }
+                    OutlinedTextField(token, { token = it }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp),
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text("Personal Access Token") },
+                        leadingIcon = { Icon(Icons.Rounded.Key, null) })
+                    Spacer(Modifier.height(13.dp))
+                    Button(onClick = { vm.loginWithToken(token) },
+                        enabled = !vm.busy && token.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                        Text("进入 RainGit"); Spacer(Modifier.width(8.dp)); Icon(Icons.Rounded.ArrowForward, null)
+                    }
+                    TextButton(onClick = { openUrl("https://github.com/settings/tokens") }) {
+                        Text("还没有 Token？去创建"); Spacer(Modifier.width(5.dp)); Icon(Icons.Rounded.OpenInNew, null, Modifier.size(16.dp))
+                    }
                 } else {
-                    OutlinedTextField(clientId, { clientId = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OAuth App Client ID") }, singleLine = true)
-                    Spacer(Modifier.height(8.dp))
-                    Text("在 GitHub 页面验证账号与 2FA，RainGit 不获取密码。需启用 OAuth Device Flow。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(16.dp))
-                    val device = vm.device
                     if (device == null) {
-                        Button(onClick = { vm.startOAuth(clientId) }, enabled = !vm.busy && clientId.isNotBlank(), modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("获取授权码") }
+                        OutlinedTextField(clientId, { clientId = it }, singleLine = true,
+                            modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp),
+                            label = { Text("OAuth Client ID") })
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { vm.startOAuth(clientId) },
+                            enabled = !vm.busy && clientId.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("开始授权") }
                     } else {
-                        SelectionContainer { Text(device.userCode, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Monospace) }
-                        Spacer(Modifier.height(8.dp))
-                        Button(onClick = { openUrl(device.url) }) { Icon(Icons.Rounded.OpenInBrowser, null); Spacer(Modifier.width(8.dp)); Text("打开 GitHub 验证") }
-                        TextButton(onClick = vm::cancelOAuth) { Text("取消授权") }
+                        Text("在浏览器输入以下授权码", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(9.dp))
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(15.dp)) {
+                            SelectionContainer {
+                                Text(device.userCode, Modifier.fillMaxWidth().padding(16.dp),
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = { openUrl(device.url) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("打开 GitHub 验证"); Spacer(Modifier.width(6.dp)); Icon(Icons.Rounded.OpenInNew, null)
+                        }
+                        TextButton(onClick = vm::cancelOAuth) { Text("取消") }
                     }
                 }
             }
         }
-        Spacer(Modifier.height(12.dp))
-        TextButton(onClick = { openUrl("https://github.com/settings/tokens") }) {
-            Text("创建 GitHub Token"); Spacer(Modifier.width(4.dp)); Icon(Icons.Rounded.OpenInNew, null, Modifier.size(16.dp))
+        Spacer(Modifier.height(13.dp))
+        TextButton(onClick = { advanced = !advanced }) {
+            Text("关于登录与权限"); Icon(if (advanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
         }
+        AnimatedVisibility(advanced) {
+            Text("Token 只保存在本机加密存储中。浏览器授权需要你自己的 OAuth App Client ID，双重验证由 GitHub 完成。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+        }
+        Spacer(Modifier.height(26.dp))
     }
 }
 

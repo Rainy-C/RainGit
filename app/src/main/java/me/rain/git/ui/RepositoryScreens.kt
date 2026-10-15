@@ -1,6 +1,9 @@
 package me.rain.git.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.*
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,7 +74,7 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
 @Composable
 private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, actionsOnly: Boolean) {
     Card(
-        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else if (local) 1 else 0) }, modifier = Modifier.fillMaxWidth(),
+        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else if (local) 1 else 0) }, modifier = Modifier.fillMaxWidth().animateContentSize(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(21.dp)
     ) {
@@ -157,36 +160,105 @@ internal fun LocalScreen(vm: RainViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SettingsScreen(vm: RainViewModel, pickDir: () -> Unit, grant: () -> Unit) {
     var author by remember { mutableStateOf(vm.store.author) }
     var email by remember { mutableStateOf(vm.store.email) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp)) {
-            Column(Modifier.padding(18.dp)) {
-                SectionHeading("提交身份", "Git Commit 的作者信息")
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(author, { author = it }, label = { Text("作者名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(9.dp))
-                OutlinedTextField(email, { email = it }, label = { Text("邮箱地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = { vm.saveAuthor(author, email) }, modifier = Modifier.fillMaxWidth()) { Text("保存身份") }
+    var confirmLogout by remember { mutableStateOf(false) }
+    val monetSupported = android.os.Build.VERSION.SDK_INT >= 31
+    LazyColumn(Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        item {
+            Surface(shape = RoundedCornerShape(25.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Row(Modifier.fillMaxWidth().padding(19.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .75f)) {
+                        Icon(Icons.Rounded.Person, null, Modifier.padding(15.dp).size(27.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                    Spacer(Modifier.width(13.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(vm.account?.displayName ?: "GitHub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text("@${vm.account?.login.orEmpty()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                    Icon(Icons.Rounded.Verified, null, tint = MaterialTheme.colorScheme.primary)
+                }
             }
         }
-        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp)) {
-            Column(Modifier.padding(18.dp)) {
-                SectionHeading("本地工作目录", "克隆仓库的保存位置")
-                Spacer(Modifier.height(9.dp))
-                Text(vm.store.root().path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(12.dp))
-                FilledTonalButton(onClick = pickDir, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("更换目录") }
-                TextButton(onClick = grant) { Text("授权访问公共目录") }
-                TextButton(onClick = vm::usePrivateRoot) { Text("恢复应用专属目录") }
-                Text("Android 公共目录需要系统授予“所有文件访问权限”。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        item { SectionHeading("外观", "跟随你的壁纸和系统风格") }
+        item {
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Palette, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("莫奈动态取色", fontWeight = FontWeight.SemiBold)
+                            Text(if (monetSupported) "从系统壁纸读取主题色" else "需要 Android 12 及以上版本", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = vm.dynamicColorEnabled && monetSupported,
+                            onCheckedChange = vm::setDynamicColor, enabled = monetSupported)
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 14.dp))
+                    Text("显示模式", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(12.dp))
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        listOf("跟随系统", "浅色", "深色").forEachIndexed { i, text ->
+                            SegmentedButton(selected = vm.themeMode == i, onClick = { vm.setTheme(i) },
+                                shape = SegmentedButtonDefaults.itemShape(i, 3)) { Text(text) }
+                        }
+                    }
+                }
             }
         }
-        OutlinedButton(onClick = vm::logout, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Logout, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("退出 GitHub 账号") }
+        item { SectionHeading("Git 身份", "提交记录会使用这里的署名") }
+        item {
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    OutlinedTextField(author, { author = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text("显示名称") }, leadingIcon = { Icon(Icons.Rounded.Badge, null) })
+                    Spacer(Modifier.height(9.dp))
+                    OutlinedTextField(email, { email = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text("提交邮箱") }, leadingIcon = { Icon(Icons.Rounded.AlternateEmail, null) })
+                    Spacer(Modifier.height(12.dp))
+                    FilledTonalButton(onClick = { vm.saveAuthor(author, email) },
+                        enabled = author.isNotBlank() && email.contains('@'), modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Rounded.Check, null); Spacer(Modifier.width(7.dp)); Text("保存提交身份")
+                    }
+                }
+            }
+        }
+        item { SectionHeading("仓库存储", "管理本地文件的保存位置") }
+        item {
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.FolderOpen, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Text("当前工作目录", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    Text(vm.store.root().path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = pickDir, modifier = Modifier.fillMaxWidth()) { Text("选择仓库目录") }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = grant) { Text("存储权限") }
+                        TextButton(onClick = vm::usePrivateRoot) { Text("恢复默认目录") }
+                    }
+                }
+            }
+        }
+        item {
+            TextButton(onClick = { confirmLogout = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Logout, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text("退出 GitHub 账号")
+            }
+        }
     }
+    if (confirmLogout) AlertDialog(onDismissRequest = { confirmLogout = false },
+        title = { Text("退出账号？") },
+        text = { Text("登录凭证会从设备移除，本地仓库文件不会删除。") },
+        confirmButton = { TextButton(onClick = { vm.logout(); confirmLogout = false }) { Text("退出登录") } },
+        dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("取消") } })
 }
 
 @Composable
@@ -218,14 +290,19 @@ internal fun RepositoryScreen(vm: RainViewModel, export: (Artifact, Boolean) -> 
             }
         }
         TabRow(selectedTabIndex = vm.detailTab, containerColor = MaterialTheme.colorScheme.background) {
-            listOf("文件", "发布", "构建").forEachIndexed { i, title ->
+            listOf("代码", "发布", "构建", "协作").forEachIndexed { i, title ->
                 Tab(selected = vm.detailTab == i, onClick = { vm.selectDetailTab(i) }, text = { Text(title) })
             }
         }
-        when (vm.detailTab) {
-            0 -> CodeScreen(vm)
-            1 -> ChangesScreen(vm)
-            2 -> ActionsScreen(vm, export, openUrl)
+        AnimatedContent(targetState = vm.detailTab,
+            transitionSpec = { fadeIn(tween(190)) togetherWith fadeOut(tween(120)) },
+            label = "repository-tab") { tab ->
+            when (tab) {
+                0 -> CodeScreen(vm)
+                1 -> ChangesScreen(vm)
+                2 -> ActionsScreen(vm, export, openUrl)
+                3 -> CollaborationScreen(vm, openUrl)
+            }
         }
     }
     vm.editorPath?.let { path ->
@@ -240,7 +317,7 @@ internal fun RepositoryScreen(vm: RainViewModel, export: (Artifact, Boolean) -> 
         )
     }
     vm.diffText?.let { TextViewer("代码差异", it, vm::closeDiff) }
-    vm.logText?.let { TextViewer("构建日志", it, vm::closeLog) }
+    vm.logText?.let { BuildLogViewer(it, vm::closeLog) }
 }
 
 @Composable

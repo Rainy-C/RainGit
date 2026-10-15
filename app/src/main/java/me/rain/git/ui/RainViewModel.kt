@@ -25,6 +25,17 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
     private val git = LocalGit { store.token() }
     private var activeJob: Job? = null
 
+    var dynamicColorEnabled by androidx.compose.runtime.mutableStateOf(store.dynamicColor)
+        private set
+    var themeMode by androidx.compose.runtime.mutableIntStateOf(store.themeMode)
+        private set
+    var downloadState by androidx.compose.runtime.mutableStateOf<String?>(null)
+        private set
+    var collaboration by androidx.compose.runtime.mutableStateOf<List<CollaborationItem>>(emptyList())
+        private set
+    var collaborationFilter by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+
     var account by androidx.compose.runtime.mutableStateOf<Account?>(null)
         private set
     var repos by androidx.compose.runtime.mutableStateOf<List<RemoteRepo>>(emptyList())
@@ -77,6 +88,9 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         if (store.token() != null) refreshAccount()
     }
 
+    fun setDynamicColor(v: Boolean) { store.dynamicColor = v; dynamicColorEnabled = v }
+    fun setTheme(v: Int) { store.themeMode = v; themeMode = v }
+    fun setCollaborationFilter(value: Int) { collaborationFilter = value.coerceIn(0, 1); refreshCollaboration() }
     fun clearMessage() { message = null }
     fun closeLog() { logText = null }
     fun closeDiff() { diffText = null }
@@ -86,6 +100,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectDetailTab(tab: Int) {
         detailTab = tab
         if (tab == 2 && selectedRepo != null) refreshActions()
+        if (tab == 3 && selectedRepo != null) refreshCollaboration()
     }
     fun closeDetail() {
         selectedRepo = null
@@ -240,9 +255,10 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         artifacts = emptyList()
         workflows = emptyList()
         runs = emptyList()
+        collaboration = emptyList()
         detailTab = tab
         screen = "detail"
-        if (tab == 2) refreshActions() else if (selectedDir != null) refreshLocal()
+        if (tab == 2) refreshActions() else if (tab == 3) refreshCollaboration() else if (selectedDir != null) refreshLocal()
     }
 
     fun openLocal(dir: File) {
@@ -255,6 +271,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         workflows = emptyList()
         runs = emptyList()
         detailTab = 0
+        collaboration = emptyList()
         screen = "detail"
         refreshLocal()
     }
@@ -289,6 +306,10 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
                 "push" -> git.push(dir)
                 "stage" -> { git.stage(dir, value); "已暂存" }
                 "unstage" -> { git.unstage(dir, value); "已取消暂存" }
+                "unstage-all" -> { git.unstageAll(dir); "已取消全部暂存" }
+                "discard" -> { git.discard(dir, value); "已撤销未暂存的修改：$value" }
+                "tag" -> { git.createTag(dir, value); "已创建本地标签 $value" }
+                "push-tags" -> git.pushTags(dir)
                 "commit" -> "提交成功 ${git.commit(dir, value, store.author, store.email)}"
                 "branch" -> { git.createBranch(dir, value); "已创建分支 $value" }
                 "checkout" -> { git.checkout(dir, value); "已切换至 $value" }
@@ -377,6 +398,19 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         runs = client.runs(repo)
     }
 
+    fun refreshCollaboration() = launchAction {
+        val r = selectedRepo ?: return@launchAction
+        collaboration = client.collaboration(r, collaborationFilter)
+    }
+
+    fun newIssue(title: String, body: String) = launchAction {
+        val r = selectedRepo ?: return@launchAction
+        val number = client.createIssue(r, title, body)
+        collaborationFilter = 1
+        collaboration = client.collaboration(r, 1)
+        message = "Issue #$number 已创建"
+    }
+
     fun dispatch(workflow: Workflow, branch: String, inputs: String) = launchAction {
         client.dispatch(selectedRepo ?: return@launchAction, workflow, branch, inputs)
         message = "已提交工作流运行请求；GitHub 可能需要几秒才会显示运行记录"
@@ -413,6 +447,12 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         logText = client.readableLogs(r, run, cache)
     }
 
+    fun readJobLogs(jobId: Long) = launchAction {
+        val r = selectedRepo ?: return@launchAction
+        val cache = File.createTempFile("rain-job-", ".log", getApplication<Application>().cacheDir)
+        logText = client.readableJobLogs(r, jobId, cache)
+    }
+
     fun readLogs() = launchAction {
         val r = selectedRepo ?: return@launchAction
         val run = chosenRun ?: return@launchAction
@@ -421,43 +461,62 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveArtifact(artifact: Artifact, target: Uri, apkOnly: Boolean = false) = launchAction {
-        if (artifact.expired) throw IOException("此 Artifact 已过期")
-        val r = selectedRepo ?: return@launchAction
+        if (artifact.expired) throw IOException("构建产物已过期")
+        val r = selectedRepo ?: throw IOException("请先选择 GitHub 仓库")
         val cache = File.createTempFile("rain-artifact-", ".zip", getApplication<Application>().cacheDir)
+        val resolver = getApplication<Application>().contentResolver
+        downloadState = "正在获取 ${artifact.name}"
         try {
             client.download(r, "/actions/artifacts/${artifact.id}/zip", cache)
-            withContext(Dispatchers.IO) {
-                val resolver = getApplication<Application>().contentResolver
-                resolver.openOutputStream(target, "w")?.use { out ->
+            val actual = cache.length()
+            require(actual >= 22L) { "下载内容异常：ZIP 文件不足 22 字节" }
+            cache.inputStream().use { input ->
+                val header = ByteArray(4)
+                require(input.read(header) == 4 && header.contentEquals(byteArrayOf(0x50, 0x4B, 0x03, 0x04))) {
+                    "服务器返回的不是 ZIP 归档，请稍后重试"
+                }
+            }
+            downloadState = "已下载 ${"%.2f".format(java.util.Locale.US, actual / 1048576.0)} MiB，正在保存"
+            val bytesWritten = withContext(Dispatchers.IO) {
+                resolver.openOutputStream(target, "wt")?.use { output ->
                     if (!apkOnly) {
-                        cache.inputStream().use { it.copyTo(out) }
+                        cache.inputStream().use { it.copyTo(output).toLong() }
                     } else {
-                        var found = false
+                        var copied = 0L
                         ZipInputStream(cache.inputStream().buffered()).use { zip ->
-                            var item = zip.nextEntry
-                            while (item != null) {
-                                if (!item.isDirectory && item.name.endsWith(".apk", ignoreCase = true)) {
+                            var entry = zip.nextEntry
+                            while (entry != null) {
+                                if (!entry.isDirectory && entry.name.endsWith(".apk", ignoreCase = true)) {
                                     val buffer = ByteArray(64 * 1024)
-                                    var total = 0L
                                     while (true) {
-                                        val size = zip.read(buffer)
-                                        if (size == -1) break
-                                        total += size
-                                        if (total > 1024L * 1024 * 1024) throw IOException("APK 大于 1 GB")
-                                        out.write(buffer, 0, size)
+                                        val n = zip.read(buffer)
+                                        if (n < 0) break
+                                        copied += n
+                                        if (copied > 1024L * 1024 * 1024) throw IOException("APK 超过 1 GB 限制")
+                                        output.write(buffer, 0, n)
                                     }
-                                    found = true
+                                    zip.closeEntry()
                                     break
                                 }
                                 zip.closeEntry()
-                                item = zip.nextEntry
+                                entry = zip.nextEntry
                             }
                         }
-                        if (!found) throw IOException("该 Artifact 中没有 APK 文件")
+                        if (copied < 1024L) throw IOException("归档内没有有效的 APK 文件")
+                        copied
                     }
-                } ?: throw IOException("无法写入目标文件")
+                } ?: throw IOException("无法写入选中的目标文件")
             }
-            message = if (apkOnly) "APK 已保存：${artifact.name}" else "Artifact ZIP 已保存：${artifact.name}"
-        } finally { cache.delete() }
+            if (bytesWritten < 1024L || (!apkOnly && bytesWritten != actual)) {
+                throw IOException("保存不完整：$bytesWritten / $actual 字节")
+            }
+            message = "已保存 ${"%.2f".format(java.util.Locale.US, bytesWritten / 1048576.0)} MiB · ${if (apkOnly) "APK" else "ZIP"}"
+        } catch (e: Exception) {
+            runCatching { android.provider.DocumentsContract.deleteDocument(resolver, target) }
+            throw e
+        } finally {
+            cache.delete()
+            downloadState = null
+        }
     }
 }

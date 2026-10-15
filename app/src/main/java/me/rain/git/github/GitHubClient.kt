@@ -34,6 +34,10 @@ data class Run(
 data class Job(val id: Long, val name: String, val status: String, val conclusion: String, val steps: List<Step>)
 data class Step(val name: String, val status: String, val conclusion: String)
 data class Artifact(val id: Long, val name: String, val size: Long, val expired: Boolean)
+data class CollaborationItem(
+    val number: Int, val title: String, val state: String, val author: String,
+    val url: String, val updated: String, val comments: Int, val draft: Boolean
+)
 data class DeviceCode(val code: String, val userCode: String, val url: String, val interval: Int, val expires: Int)
 
 class GitHubClient(private val token: () -> String?) {
@@ -123,6 +127,24 @@ class GitHubClient(private val token: () -> String?) {
         }
     }
 
+    suspend fun collaboration(r: RemoteRepo, filter: Int): List<CollaborationItem> = withContext(Dispatchers.IO) {
+        val path = if (filter == 0) "pulls" else "issues"
+        val data = JSONArray(call(endpoint("${repoPath(r)}/$path?state=open&sort=updated&direction=desc&per_page=60")))
+        (0 until data.length()).mapNotNull { i ->
+            val j = data.getJSONObject(i)
+            if (filter == 1 && j.has("pull_request")) return@mapNotNull null
+            CollaborationItem(j.optInt("number"), j.optString("title"), j.optString("state"),
+                j.optJSONObject("user")?.optString("login").orEmpty(), j.optString("html_url"),
+                j.optString("updated_at"), j.optInt("comments"), j.optBoolean("draft"))
+        }
+    }
+
+    suspend fun createIssue(r: RemoteRepo, title: String, description: String): Int = withContext(Dispatchers.IO) {
+        require(title.trim().isNotEmpty()) { "请输入 Issue 标题" }
+        JSONObject(call(endpoint("${repoPath(r)}/issues"), "POST",
+            JSONObject().put("title", title.trim()).put("body", description.trim()).toString())).getInt("number")
+    }
+
     suspend fun dispatch(r: RemoteRepo, w: Workflow, branch: String, inputsText: String) = withContext(Dispatchers.IO) {
         require(branch.isNotBlank()) { "请输入分支" }
         val inputs = if (inputsText.isBlank()) JSONObject() else JSONObject(inputsText)
@@ -163,6 +185,14 @@ class GitHubClient(private val token: () -> String?) {
             destination.delete()
             throw e
         }
+    }
+
+    suspend fun readableJobLogs(r: RemoteRepo, jobId: Long, cache: File): String = withContext(Dispatchers.IO) {
+        download(r, "/actions/jobs/$jobId/logs", cache)
+        try {
+            require(cache.length() > 0) { "工作任务日志为空" }
+            cache.bufferedReader(Charsets.UTF_8).use { it.readText().take(1_500_000) }
+        } finally { cache.delete() }
     }
 
     suspend fun readableLogs(r: RemoteRepo, run: Run, cache: File): String = withContext(Dispatchers.IO) {

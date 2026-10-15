@@ -3,6 +3,8 @@ package me.rain.git.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.foundation.layout.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +42,8 @@ internal fun ChangesScreen(vm: RainViewModel) {
     var branchMenu by remember(vm.selectedDir) { mutableStateOf(false) }
     var newBranch by remember(vm.selectedDir) { mutableStateOf("") }
     var switchTo by remember { mutableStateOf<String?>(null) }
+    var discardPath by remember { mutableStateOf<String?>(null) }
+    var tagText by remember(vm.selectedDir) { mutableStateOf("") }
     val hasChanges = changedFiles.isNotEmpty()
     val pending = snap?.ahead ?: 0
     val behind = snap?.behind ?: 0
@@ -160,6 +164,7 @@ internal fun ChangesScreen(vm: RainViewModel) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { vm.gitOperation("stage", ".") }, enabled = !vm.busy && unstaged.isNotEmpty()) { Text("全部暂存") }
+                        TextButton(onClick = { vm.gitOperation("unstage-all") }, enabled = !vm.busy && staged.isNotEmpty()) { Text("取消暂存") }
                         TextButton(onClick = { vm.showDiff(false) }, enabled = !vm.busy) { Text("查看修改") }
                         TextButton(onClick = { vm.showDiff(true) }, enabled = !vm.busy && staged.isNotEmpty()) { Text("查看已暂存") }
                     }
@@ -168,7 +173,14 @@ internal fun ChangesScreen(vm: RainViewModel) {
                     FileChangeTile(path, "冲突", "需手动解决", {}, false)
                 }
                 items(unstaged, key = { "unstaged-$it" }) { path ->
-                    FileChangeTile(path, if (path in conflicts) "冲突" else "未暂存", "暂存", { vm.gitOperation("stage", path) }, !vm.busy)
+                    Column {
+                        FileChangeTile(path, if (path in conflicts) "冲突" else "未暂存", "暂存", { vm.gitOperation("stage", path) }, !vm.busy)
+                        if (path !in conflicts && path !in snap?.untracked.orEmpty()) {
+                            TextButton(onClick = { discardPath = path }, enabled = !vm.busy) {
+                                Icon(Icons.Rounded.Undo, null, Modifier.size(16.dp)); Text("撤销此文件未暂存修改")
+                            }
+                        }
+                    }
                 }
                 items(staged, key = { "staged-$it" }) { path ->
                     FileChangeTile(path, "已暂存", "撤销暂存", { vm.gitOperation("unstage", path) }, !vm.busy)
@@ -182,7 +194,7 @@ internal fun ChangesScreen(vm: RainViewModel) {
                         Spacer(Modifier.width(11.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Git 高级操作", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            Text("仅提交、分支、Stash、提交历史", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("分支、Tag、Stash 与提交历史", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Icon(if (showAdvanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                     }
@@ -217,6 +229,23 @@ internal fun ChangesScreen(vm: RainViewModel) {
                     }
                 }
                 item {
+                    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                        Column(Modifier.padding(15.dp)) {
+                            SectionHeading("版本标签", "为当前提交创建 Tag")
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(tagText, { tagText = it }, label = { Text("标签名，例如 v1.2.0") },
+                                modifier = Modifier.fillMaxWidth(), singleLine = true)
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilledTonalButton(onClick = { vm.gitOperation("tag", tagText); tagText = "" },
+                                    enabled = !vm.busy && tagText.isNotBlank(), modifier = Modifier.weight(1f)) { Text("创建 Tag") }
+                                OutlinedButton(onClick = { vm.gitOperation("push-tags") }, enabled = !vm.busy,
+                                    modifier = Modifier.weight(1f)) { Text("推送标签") }
+                            }
+                        }
+                    }
+                }
+                item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { vm.gitOperation("stash") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("保存 Stash") }
                         OutlinedButton(onClick = { vm.gitOperation("apply") }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("恢复 Stash") }
@@ -228,6 +257,13 @@ internal fun ChangesScreen(vm: RainViewModel) {
                 }
             }
         }
+    }
+    discardPath?.let { path ->
+        AlertDialog(onDismissRequest = { discardPath = null },
+            title = { Text("撤销修改？") },
+            text = { Text("将用已暂存版本恢复 $path 的工作区内容。此操作无法撤销，不会清除已经暂存的版本。") },
+            confirmButton = { TextButton(onClick = { vm.gitOperation("discard", path); discardPath = null }) { Text("确认撤销", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { discardPath = null }) { Text("取消") } })
     }
     switchTo?.let { branch ->
         AlertDialog(

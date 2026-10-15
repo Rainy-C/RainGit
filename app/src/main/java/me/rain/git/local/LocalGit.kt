@@ -94,6 +94,37 @@ class LocalGit(private val token: () -> String?) {
         git.reset().addPath(path).call()
     }
 
+    fun unstageAll(dir: File): Unit = Git.open(dir).use { git ->
+        git.reset().call()
+    }
+
+    fun discard(dir: File, path: String): Unit = Git.open(dir).use { git ->
+        require(path.isNotBlank() && path != "." && !path.startsWith('/') &&
+            path.split('/').none { it == ".." }) { "非法文件路径" }
+        val status = git.status().call()
+        require(path !in status.untracked && path !in status.conflicting) {
+            "新增文件或冲突文件不能直接撤销，请手动处理"
+        }
+        require(path in status.modified || path in status.missing) { "文件没有可撤销的未暂存修改" }
+        git.checkout().addPath(path).call()
+    }
+
+    fun createTag(dir: File, tag: String): Unit = Git.open(dir).use { git ->
+        require(Regex("[A-Za-z0-9][A-Za-z0-9._/-]*").matches(tag) && !tag.contains("..") &&
+            !tag.endsWith('/') && !tag.endsWith('.') && !tag.contains("@{")) { "标签名称不合法" }
+        git.tag().setName(tag).setMessage("Release $tag").call()
+    }
+
+    fun pushTags(dir: File): String = Git.open(dir).use { git ->
+        val results = git.push().setPushTags().setCredentialsProvider(auth()).call()
+        val failed = results.flatMap { it.remoteUpdates }.filter {
+            it.status != org.eclipse.jgit.transport.RemoteRefUpdate.Status.OK &&
+                it.status != org.eclipse.jgit.transport.RemoteRefUpdate.Status.UP_TO_DATE
+        }
+        if (failed.isNotEmpty()) throw IOException(failed.joinToString("; ") { "${it.remoteName}: ${it.status}" })
+        "标签已推送"
+    }
+
     fun commit(dir: File, message: String, name: String, email: String): String = Git.open(dir).use { git ->
         require(message.isNotBlank()) { "提交说明不能为空" }
         require(name.isNotBlank() && email.contains('@')) { "请在设置中填写 Git 作者和邮箱" }

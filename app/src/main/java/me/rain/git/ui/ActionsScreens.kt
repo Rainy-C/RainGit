@@ -1,6 +1,9 @@
 package me.rain.git.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import java.util.Locale
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -196,7 +199,7 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
         items(vm.jobs, key = { "job-${it.id}" }) { job ->
             val state = runAppearance(job.status, job.conclusion)
             Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp)) {
-                Column {
+                Column(Modifier.animateContentSize()) {
                     Row(Modifier.fillMaxWidth().clickable { expanded = if (job.id in expanded) expanded - job.id else expanded + job.id }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(state.icon, null, Modifier.size(20.dp), tint = state.color)
                         Spacer(Modifier.width(10.dp))
@@ -204,9 +207,13 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
                             Text(job.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                             Text(state.name, style = MaterialTheme.typography.labelSmall, color = state.color)
                         }
+                        if (job.status == "completed") TextButton(onClick = { vm.readJobLogs(job.id) }, enabled = !vm.busy) {
+                            Icon(Icons.Rounded.Description, null, Modifier.size(16.dp)); Text("日志")
+                        }
                         Icon(if (job.id in expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                     }
-                    if (job.id in expanded) {
+                    AnimatedVisibility(job.id in expanded) {
+                        Column {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         job.steps.forEach { step ->
                             val stepLook = runAppearance(step.status, step.conclusion)
@@ -217,11 +224,21 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
                                 Text(stepLook.name, style = MaterialTheme.typography.labelSmall, color = stepLook.color)
                             }
                         }
+                        }
                     }
                 }
             }
         }
-        item { SectionHeading("构建产物", "${vm.artifacts.size} 个 Artifacts · 优先提取 APK") }
+        item { SectionHeading("构建产物", "${vm.artifacts.size} 个文件 · 已验证大小后下载") }
+        if (vm.downloadState != null) item {
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                    Text(vm.downloadState.orEmpty(), style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
+        }
         items(vm.artifacts, key = { "artifact-${it.id}" }) { artifact ->
             Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.fillMaxWidth().padding(14.dp)) {
@@ -230,7 +247,7 @@ private fun RunScreen(vm: RainViewModel, run: Run, export: (Artifact, Boolean) -
                         Spacer(Modifier.width(9.dp))
                         Column(Modifier.weight(1f)) {
                             Text(artifact.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                            Text("${artifact.size / 1024} KB${if (artifact.expired) " · 已过期" else ""}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${String.format(Locale.US, "%.2f MiB", artifact.size / 1048576.0)}${if (artifact.expired) " · 已过期" else ""}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     Spacer(Modifier.height(10.dp))

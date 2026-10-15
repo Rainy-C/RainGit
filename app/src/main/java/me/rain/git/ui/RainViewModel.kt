@@ -50,7 +50,6 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
     var downloading by androidx.compose.runtime.mutableStateOf(false)
         private set
 
-        private set
     var themeMode by androidx.compose.runtime.mutableIntStateOf(store.themeMode)
         private set
     var downloadState by androidx.compose.runtime.mutableStateOf<String?>(null)

@@ -230,7 +230,7 @@ private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
         }
         items(vm.jobs, key = { "job-${it.id}" }) { job ->
             val state = runAppearance(job.status, job.conclusion)
-            val isExpanded = expanded[job.id] ?: (job.status == "in_progress")
+            val isExpanded = expanded[job.id] ?: (job.status == "in_progress" || job.conclusion in listOf("failure", "timed_out"))
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.animateContentSize()) {
@@ -251,11 +251,17 @@ private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         job.steps.forEach { step ->
                             val stepLook = runAppearance(step.status, step.conclusion)
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(stepLook.icon, null, Modifier.size(16.dp), tint = stepLook.color)
+                            val failed = step.conclusion in listOf("failure", "timed_out")
+                            Row(Modifier.fillMaxWidth().clickable(enabled = !vm.busy) { vm.readJobLogs(job.id) }
+                                .padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(stepLook.icon, stepLook.name, Modifier.size(16.dp), tint = stepLook.color)
                                 Spacer(Modifier.width(10.dp))
-                                Text(step.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                Text(stepLook.name, style = MaterialTheme.typography.labelSmall, color = stepLook.color)
+                                Text(step.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (failed) FontWeight.SemiBold else FontWeight.Normal)
+                                if (failed || step.status == "in_progress") {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(stepLook.name, style = MaterialTheme.typography.labelSmall, color = stepLook.color)
+                                }
                             }
                         }
                         }

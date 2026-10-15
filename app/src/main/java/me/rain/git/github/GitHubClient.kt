@@ -13,7 +13,7 @@ import java.io.File
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipInputStream
+import java.util.zip.ZipFile
 
 private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 
@@ -243,12 +243,21 @@ class GitHubClient(private val token: () -> String?) {
             download(r, "/actions/runs/${run.id}/logs", cache)
             val text = StringBuilder()
             var total = 0L
-            ZipInputStream(cache.inputStream().buffered()).use { zip ->
-                var entry = zip.nextEntry
-                while (entry != null) {
-                    if (!entry.isDirectory && entry.name.endsWith(".txt", true)) {
-                        appendTail(text, "\n\n── ${entry.name} ──\n", 700_000)
-                        val reader = java.io.InputStreamReader(zip, Charsets.UTF_8)
+            ZipFile(cache).use { zip ->
+                val entries = zip.entries().asSequence()
+                    .filter { !it.isDirectory && it.name.endsWith(".txt", true) }.toList()
+                // GitHub includes both a root job log and the same output split into step files.
+                val jobLog = Regex("^\\d+_(.+)\\.txt$", RegexOption.IGNORE_CASE)
+                val aggregateJobs = entries.filter { '/' !in it.name }
+                    .mapNotNull { jobLog.matchEntire(it.name)?.groupValues?.get(1) }.toSet()
+                val selected = entries.filter { entry ->
+                    '/' !in entry.name || entry.name.substringBefore('/') !in aggregateJobs
+                }.sortedWith(compareBy({ it.name.substringBeforeLast('/', "") },
+                    { it.name.substringAfterLast('/').substringBefore('_').toIntOrNull() ?: Int.MAX_VALUE },
+                    { it.name }))
+                selected.forEach { entry ->
+                    appendTail(text, "\n\n── ${entry.name} ──\n", 700_000)
+                    zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { reader ->
                         val chars = CharArray(8192)
                         while (true) {
                             val count = reader.read(chars)
@@ -258,8 +267,6 @@ class GitHubClient(private val token: () -> String?) {
                             appendTail(text, String(chars, 0, count), 700_000)
                         }
                     }
-                    zip.closeEntry()
-                    entry = zip.nextEntry
                 }
             }
             if (text.isEmpty()) "日志压缩包中没有文本日志"

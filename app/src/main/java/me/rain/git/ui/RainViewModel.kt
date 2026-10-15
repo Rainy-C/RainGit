@@ -75,6 +75,8 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var files by androidx.compose.runtime.mutableStateOf<List<String>>(emptyList())
         private set
+    var directories by androidx.compose.runtime.mutableStateOf<List<String>>(emptyList())
+        private set
     var workflows by androidx.compose.runtime.mutableStateOf<List<Workflow>>(emptyList())
         private set
     var runs by androidx.compose.runtime.mutableStateOf<List<Run>>(emptyList())
@@ -205,6 +207,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         collaboration = emptyList()
         chosenRun = null
         files = emptyList()
+        directories = emptyList()
         editorPath = null
         diffText = null
         lastDownloadedPath = null
@@ -252,6 +255,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         selectedDir = git.directory(store.root(), repo).takeIf { git.isRepo(it) }
         snapshot = null
         files = emptyList()
+        directories = emptyList()
         chosenRun = null
         jobs = emptyList()
         artifacts = emptyList()
@@ -277,6 +281,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
             ?: repos.firstOrNull { git.directory(store.root(), it).canonicalFile == dir.canonicalFile }
         snapshot = null
         files = emptyList()
+        directories = emptyList()
         chosenRun = null
         workflows = emptyList()
         runs = emptyList()
@@ -297,8 +302,12 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun refreshLocalInner(dir: File) {
-        val result = local { git.excludeDist(dir); git.snapshot(dir) to git.files(dir) }
-        if (selectedDir == dir) { snapshot = result.first; files = result.second }
+        val result = local { git.excludeDist(dir); Triple(git.snapshot(dir), git.files(dir), git.directories(dir)) }
+        if (selectedDir == dir) {
+            snapshot = result.first
+            files = result.second
+            directories = result.third
+        }
     }
 
     fun refreshLocal() = launchAction {
@@ -562,6 +571,14 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
     fun showCommit(id: String) = launchAction {
         val dir = selectedDir ?: return@launchAction
         diffText = local { git.commitDetails(dir, id) }
+    }
+
+    fun createDirectory(path: String) = launchAction {
+        val dir = selectedDir ?: return@launchAction
+        require(!downloading) { "下载期间无法修改工作区" }
+        local { git.createDirectory(dir, path) }
+        refreshLocalInner(dir)
+        message = "文件夹已创建，提交后即可同步"
     }
 
     fun createFile(path: String) = launchAction {

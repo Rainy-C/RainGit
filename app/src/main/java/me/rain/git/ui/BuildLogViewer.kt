@@ -106,7 +106,7 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit, status: String = "
             Text(status.ifBlank { if (loading) "正在获取日志…" else "关键步骤与问题摘要" },
                 Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Box(Modifier.fillMaxWidth().height(2.dp)) { if (loading) LinearProgressIndicator(Modifier.fillMaxSize()) }
+            WaveLoadingBar(loading, Modifier.fillMaxWidth())
             AnimatedVisibility(searching) {
                 OutlinedTextField(search, { search = it; followTail = false }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     singleLine = true, shape = RoundedCornerShape(12.dp), placeholder = { Text("搜索内容或文件名") },

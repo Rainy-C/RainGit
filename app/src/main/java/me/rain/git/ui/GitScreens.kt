@@ -140,7 +140,7 @@ internal fun ChangesScreen(vm: RainViewModel) {
         }
         Surface(color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                AnimatedVisibility(visible = hasChanges, enter = expandVertically(tween(180)) + fadeIn(), exit = shrinkVertically(tween(180)) + fadeOut()) {
+                AnimatedVisibility(visible = hasChanges, enter = fadeIn(tween(130)), exit = fadeOut(tween(100))) {
                     OutlinedTextField(commitText, { commitText = it }, enabled = !vm.busy, singleLine = true,
                         modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
                         placeholder = { Text("这次修改了什么？") },

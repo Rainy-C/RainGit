@@ -260,6 +260,17 @@ class LocalGit(private val token: () -> String?) {
             .sorted().toList()
     }
 
+    fun directories(dir: File): List<String> {
+        val base = dir.canonicalFile
+        return base.walkTopDown()
+            .onEnter { it.name != ".git" && (it == base || it != File(base, "dist")) &&
+                !java.nio.file.Files.isSymbolicLink(it.toPath()) }
+            .filter { it != base && it.isDirectory }
+            .take(1200)
+            .map { it.relativeTo(base).invariantSeparatorsPath }
+            .sorted().toList()
+    }
+
     private fun within(root: File, relative: String): File {
         require(relative.isNotBlank() && !relative.startsWith('/'))
         require(relative.split('/').none { it == ".." || it.equals(".git", true) } && relative != "dist" && !relative.startsWith("dist/")) { "该路径受保护" }
@@ -392,6 +403,19 @@ class LocalGit(private val token: () -> String?) {
                 }
             }
             "${commit.name}\n${commit.authorIdent.name} <${commit.authorIdent.emailAddress}>\n\n${commit.fullMessage}\n\n${output.toString("UTF-8").take(600_000)}"
+        }
+    }
+
+    fun createDirectory(dir: File, path: String) {
+        val relative = path.trim().trimEnd('/')
+        require(relative.isNotBlank() && relative != ".") { "请输入文件夹名称" }
+        val target = within(dir, relative)
+        require(!target.exists()) { "文件夹已存在" }
+        require(target.mkdirs()) { "无法创建文件夹" }
+        val marker = File(target, ".gitkeep")
+        if (!marker.createNewFile()) {
+            target.delete()
+            throw IOException("无法创建 .gitkeep 文件")
         }
     }
 

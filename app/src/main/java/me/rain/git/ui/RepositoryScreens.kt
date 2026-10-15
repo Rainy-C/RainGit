@@ -63,7 +63,7 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 5.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             items(filtered, key = { it.fullName }) { repo ->
                 val local = vm.localDirs.any { it.name == "${repo.owner}--${repo.name}" }
-                Box(Modifier.animateItem()) { RepositoryTile(vm, repo, local, actionsOnly) }
+                RepositoryTile(vm, repo, local, actionsOnly)
             }
             if (filtered.isEmpty()) item {
                 EmptyPanel(Icons.Rounded.FolderOff, "这里还没有仓库", if (search.isNotBlank() || filter != 0) "尝试更换搜索条件" else "点击右上角刷新同步 GitHub 仓库")
@@ -74,45 +74,70 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
 
 @Composable
 private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, actionsOnly: Boolean) {
+    val favored = repo.fullName in vm.favoriteRepos
     Card(
-        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else 0) }, modifier = Modifier.fillMaxWidth().animateContentSize(),
+        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else 0) },
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)),
-        shape = RoundedCornerShape(21.dp)
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+        shape = RoundedCornerShape(18.dp)
     ) {
-        Column(Modifier.padding(15.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
-                    Icon(if (actionsOnly) Icons.Rounded.Terminal else Icons.Rounded.Folder, null,
-                        Modifier.padding(10.dp).size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(13.dp)) {
+                    Icon(if (actionsOnly) Icons.Rounded.Terminal else Icons.Rounded.Folder,
+                        null, Modifier.padding(11.dp).size(21.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                 }
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(repo.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(repo.owner, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(repo.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(repo.owner, style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { vm.toggleFavorite(repo.fullName) }) {
-                    Icon(if (repo.fullName in vm.favoriteRepos) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                        contentDescription = "收藏仓库", tint = if (repo.fullName in vm.favoriteRepos) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(if (favored) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                        contentDescription = if (favored) "取消收藏" else "收藏",
+                        tint = if (favored) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (repo.description.isNotBlank()) {
-                Spacer(Modifier.height(9.dp))
-                Text(repo.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(repo.defaultBranch, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            Text(repo.description.ifBlank { "没有仓库描述" }, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Rounded.AccountTree, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(repo.defaultBranch, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                 if (repo.privateRepo) StateLabel("私有", MaterialTheme.colorScheme.secondary)
-
+                if (local) StateLabel("已克隆")
+            }
+            if (repo.updatedAt.isNotBlank()) {
+                Spacer(Modifier.height(5.dp))
+                Text("更新于 ${repo.updatedAt.take(10)}", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(11.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
+            Spacer(Modifier.height(7.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!actionsOnly) {
                     TextButton(onClick = {
-                        if (local) vm.openRemote(repo, 1) else { vm.openRemote(repo, 0); vm.clone() }
-                    }, enabled = !vm.busy && !vm.downloading) { Text(if (local) "发布" else "克隆") }
+                        if (local) vm.openRemote(repo, 0)
+                        else { vm.openRemote(repo, 0); vm.clone() }
+                    }, enabled = !vm.busy && !vm.downloading, modifier = Modifier.weight(1f)) {
+                        Icon(if (local) Icons.Rounded.Code else Icons.Rounded.CloudDownload, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (local) "查看代码" else "克隆仓库")
+                    }
                 }
-                IconButton(onClick = { vm.openRemote(repo, 2) }, enabled = !vm.busy) {
-                    Icon(Icons.Rounded.PlayArrow, "查看构建")
+                FilledTonalButton(onClick = { vm.openRemote(repo, 2) }, enabled = !vm.busy,
+                    modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Rounded.PlayArrow, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("构建记录")
                 }
             }
         }
@@ -294,12 +319,7 @@ internal fun RepositoryScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
                 Tab(selected = vm.detailTab == i, enabled = !vm.busy, onClick = { vm.selectDetailTab(i) }, text = { Text(title) })
             }
         }
-        AnimatedContent(targetState = vm.detailTab,
-            transitionSpec = {
-                val direction = if (targetState > initialState) 1 else -1
-                (fadeIn(tween(160)) + slideInHorizontally(tween(200)) { it / 14 * direction }) togetherWith
-                    (fadeOut(tween(100)) + slideOutHorizontally(tween(200)) { -it / 14 * direction })
-            },
+        Crossfade(targetState = vm.detailTab, animationSpec = tween(140),
             label = "repository-tab", modifier = Modifier.weight(1f)) { tab ->
             tabState.SaveableStateProvider("$repositoryKey:$tab") {
                 when (tab) {
@@ -325,11 +345,15 @@ private fun CodeScreen(vm: RainViewModel) {
     var search by rememberSaveable(dir.path) { mutableStateOf("") }
     var folder by rememberSaveable(dir.path) { mutableStateOf("") }
     var create by remember(dir) { mutableStateOf(false) }
+    var createFolder by remember(dir) { mutableStateOf(false) }
     var fileMenu by remember(dir) { mutableStateOf<String?>(null) }
     var rename by remember(dir) { mutableStateOf<String?>(null) }
     var delete by remember(dir) { mutableStateOf<String?>(null) }
-    if (create) TextInputDialog("新建文件", "相对路径", "路径相对于当前目录", onDismiss = { create = false }) {
+    if (create) TextInputDialog("新建文件", "文件名", "在当前目录中创建文件", onDismiss = { create = false }) {
         vm.createFile(folder + it); create = false
+    }
+    if (createFolder) TextInputDialog("新建文件夹", "文件夹名称", "将添加 .gitkeep，以便 Git 跟踪空文件夹", onDismiss = { createFolder = false }) {
+        vm.createDirectory(folder + it); createFolder = false
     }
     rename?.let { path -> TextInputDialog("重命名文件", "相对仓库根目录的路径", "原路径：$path", path, { rename = null }) {
         vm.renameFile(path, it); rename = null
@@ -339,10 +363,13 @@ private fun CodeScreen(vm: RainViewModel) {
         confirmButton = { TextButton(onClick = { vm.deleteFile(path); delete = null }, enabled = !vm.busy) { Text("删除") } },
         dismissButton = { TextButton(onClick = { delete = null }) { Text("取消") } }) }
     val all = vm.files
-    val folders = remember(all, folder, search) {
-        if (search.isNotBlank()) emptyList() else all.asSequence().filter { it.startsWith(folder) }
-            .mapNotNull { it.removePrefix(folder).substringBefore('/', "").takeIf { part -> part.isNotEmpty() } }
-            .distinct().sorted().toList()
+    val folders = remember(all, vm.directories, folder, search) {
+        if (search.isNotBlank()) emptyList() else {
+            (vm.directories + all.mapNotNull { it.substringBeforeLast('/', "").takeIf(String::isNotBlank) })
+                .asSequence().filter { it.startsWith(folder) }
+                .map { it.removePrefix(folder).substringBefore('/') }
+                .filter { it.isNotBlank() }.distinct().sorted().toList()
+        }
     }
     val files = remember(all, folder, search) {
         if (search.isNotBlank()) all.filter { it.contains(search, true) }
@@ -351,7 +378,12 @@ private fun CodeScreen(vm: RainViewModel) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 7.dp)) {
             SectionHeading("文件") {
-                IconButton(onClick = { create = true }, enabled = !vm.busy) { Icon(Icons.Rounded.NoteAdd, "新建文件") }
+                IconButton(onClick = { createFolder = true }, enabled = !vm.busy) {
+                    Icon(Icons.Rounded.CreateNewFolder, "新建文件夹")
+                }
+                IconButton(onClick = { create = true }, enabled = !vm.busy) {
+                    Icon(Icons.Rounded.NoteAdd, "新建文件")
+                }
             }
             OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
                 placeholder = { Text("搜索文件 · ${all.size} 个") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },

@@ -139,6 +139,7 @@ internal fun EditorPanel(vm: RainViewModel, path: String) {
             OutlinedTextField(vm.editorText, { vm.editText(it); dirty = true }, enabled = !vm.busy,
                 modifier = Modifier.weight(1f).fillMaxWidth().padding(12.dp), shape = RoundedCornerShape(12.dp),
                 textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                visualTransformation = rememberCodeSyntax(path),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(autoCorrectEnabled = false))
         }
         if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false }, title = { Text("放弃未保存内容？") },

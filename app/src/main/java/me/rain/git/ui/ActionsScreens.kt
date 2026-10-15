@@ -1,8 +1,8 @@
 package me.rain.git.ui
 
 import androidx.compose.foundation.clickable
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import java.util.Locale
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -233,7 +233,7 @@ private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
             val isExpanded = expanded[job.id] ?: (job.status == "in_progress" || job.conclusion in listOf("failure", "timed_out"))
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.animateContentSize()) {
+                Column(Modifier.animateContentSize(animationSpec = tween(150))) {
                     Row(Modifier.fillMaxWidth().clickable { expanded = expanded + (job.id to !isExpanded) }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(state.icon, null, Modifier.size(20.dp), tint = state.color)
                         Spacer(Modifier.width(10.dp))
@@ -246,7 +246,7 @@ private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
                         }
                         Icon(if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                     }
-                    AnimatedVisibility(isExpanded) {
+                    AnimatedVisibility(visible = isExpanded, enter = fadeIn(tween(130)), exit = fadeOut(tween(90))) {
                         Column {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         job.steps.forEach { step ->
@@ -275,7 +275,7 @@ private fun RunScreen(vm: RainViewModel, run: Run, openUrl: (String) -> Unit) {
                 Column(Modifier.fillMaxWidth().padding(12.dp)) {
                     Text(vm.downloadState.orEmpty(), style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(6.dp))
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    WaveLoadingBar(vm.downloading, Modifier.fillMaxWidth())
                     TextButton(onClick = vm::cancelDownload) { Text("取消下载") }
                 }
             }

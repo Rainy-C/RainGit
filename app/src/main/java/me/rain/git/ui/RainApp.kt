@@ -114,9 +114,7 @@ fun RainApp(
             }
         ) { padding ->
             Column(Modifier.padding(padding).consumeWindowInsets(padding).imePadding().fillMaxSize()) {
-                Box(Modifier.fillMaxWidth().height(3.dp)) {
-                    if (model.busy) LinearProgressIndicator(Modifier.fillMaxSize())
-                }
+                WaveLoadingBar(model.busy, Modifier.fillMaxWidth())
                 if (!loggedIn) LoginScreen(model, onOpenUrl)
                 else AnimatedContent(
                     targetState = model.screen,
@@ -164,8 +162,10 @@ private fun LoginScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
                 Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text("登录 GitHub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Personal Access Token", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(token, { token = it }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(16.dp),
                         visualTransformation = if (showToken) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                             keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
@@ -173,7 +173,7 @@ private fun LoginScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
                             if (token.isNotBlank() && !vm.busy) vm.loginWithToken(token)
                         }),
-                        label = { Text("Personal Access Token") },
+                        placeholder = { Text("ghp_ / github_pat_") },
                         leadingIcon = { Icon(Icons.Rounded.Key, null) },
                         trailingIcon = { IconButton(onClick = { showToken = !showToken }) {
                             Icon(if (showToken) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,

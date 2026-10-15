@@ -13,12 +13,12 @@ if [[ ! -f "$KEYSTORE" || ! -f "$PASSFILE" ]]; then
     echo '发现不完整的旧签名配置，请备份并检查 ~/.config/raingit/signing'; exit 1
   fi
   PASSWORD="$(openssl rand -hex 24)"
-  TMPDIR="$(mktemp -d)"
-  trap 'rm -rf "$TMPDIR"' EXIT
-  openssl req -new -x509 -newkey rsa:3072 -nodes -days 36500 -sha256 -subj '/CN=RainGit/O=RainGit' -keyout "$TMPDIR/private.pem" -out "$TMPDIR/cert.pem" >/dev/null 2>&1
-  openssl pkcs12 -export -inkey "$TMPDIR/private.pem" -in "$TMPDIR/cert.pem" -name raingit -out "$KEYSTORE" -passout "pass:$PASSWORD"
+  SIGNING_TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "$SIGNING_TMP_DIR"' EXIT
+  openssl req -new -x509 -newkey rsa:3072 -nodes -days 36500 -sha256 -subj '/CN=RainGit/O=RainGit' -keyout "$SIGNING_TMP_DIR/private.pem" -out "$SIGNING_TMP_DIR/cert.pem" >/dev/null 2>&1
+  openssl pkcs12 -export -inkey "$SIGNING_TMP_DIR/private.pem" -in "$SIGNING_TMP_DIR/cert.pem" -name raingit -out "$KEYSTORE" -passout "pass:$PASSWORD"
   printf '%s' "$PASSWORD" > "$PASSFILE"
-  rm -rf "$TMPDIR"
+  rm -rf "$SIGNING_TMP_DIR"
   trap - EXIT
 else
   PASSWORD="$(cat "$PASSFILE")"

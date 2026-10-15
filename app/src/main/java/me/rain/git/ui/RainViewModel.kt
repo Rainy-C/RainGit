@@ -31,6 +31,8 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var localDirs by androidx.compose.runtime.mutableStateOf<List<File>>(emptyList())
         private set
+    var favoriteRepos by androidx.compose.runtime.mutableStateOf(store.favoriteRepos)
+        private set
     var selectedRepo by androidx.compose.runtime.mutableStateOf<RemoteRepo?>(null)
         private set
     var selectedDir by androidx.compose.runtime.mutableStateOf<File?>(null)
@@ -193,6 +195,11 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         message = "已退出账号"
     }
 
+    fun toggleFavorite(fullName: String) {
+        favoriteRepos = if (fullName in favoriteRepos) favoriteRepos - fullName else favoriteRepos + fullName
+        store.favoriteRepos = favoriteRepos
+    }
+
     fun reloadLocal() {
         localDirs = runCatching { store.root().listFiles()?.filter { git.isRepo(it) }?.sortedBy { it.name } ?: emptyList() }
             .getOrDefault(emptyList())
@@ -341,6 +348,12 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         client.control(r, run, operation)
         message = "请求已提交：$operation"
         runs = client.runs(r)
+    }
+
+    fun openRunLogs(run: Run) = launchAction {
+        val r = selectedRepo ?: return@launchAction
+        val cache = File(getApplication<Application>().cacheDir, "actions-log-${run.id}.zip")
+        logText = client.readableLogs(r, run, cache)
     }
 
     fun readLogs() = launchAction {

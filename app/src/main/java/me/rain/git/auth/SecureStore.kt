@@ -51,6 +51,10 @@ class SecureStore(private val context: Context) {
 
     fun logout() { prefs.edit().remove("secret").apply() }
 
+    var favoriteRepos: Set<String>
+        get() = prefs.getStringSet("favorite_repos", emptySet()).orEmpty().toSet()
+        set(value) { prefs.edit().putStringSet("favorite_repos", value.toSet()).apply() }
+
     var oauthClientId: String
         get() = prefs.getString("oauth_client_id", "").orEmpty()
         set(v) { prefs.edit().putString("oauth_client_id", v.trim()).apply() }

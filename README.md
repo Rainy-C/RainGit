@@ -1,3 +1,3 @@
 # RainGit
-
-推送了一大坨屎到仓库
+#Hello World
+#欢迎Star

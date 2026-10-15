@@ -2,6 +2,9 @@ package me.rain.git.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -20,9 +23,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 
 private enum class LogKind { ERROR, WARNING, STEP, NORMAL }
 private data class LogRow(val index: Int, val content: String, val kind: LogKind)
@@ -68,13 +70,17 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit, status: String = "
         }.takeLast(6000)
     }
     var followTail by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) followTail = false
+        }
+    }
     LaunchedEffect(raw, filter, search, followTail) {
         if (followTail && search.isBlank() && shown.isNotEmpty()) listState.scrollToItem(shown.lastIndex)
     }
     val firstProblem = shown.indexOfFirst { it.kind == LogKind.ERROR }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxWidth(.98f).fillMaxHeight(.94f),
-            shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+    FullScreenPanel(onClose) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Terminal, null, tint = MaterialTheme.colorScheme.primary)
@@ -93,34 +99,16 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit, status: String = "
                     IconButton(onClick = refresh, enabled = !loading) { Icon(Icons.Rounded.Refresh, "刷新日志") }
                     IconButton(onClick = openWeb) { Icon(Icons.Rounded.OpenInNew, "网页实时日志") }
                 }
-                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                Box(Modifier.fillMaxWidth().height(3.dp)) { if (loading) LinearProgressIndicator(Modifier.fillMaxSize()) }
                 Spacer(Modifier.height(8.dp))
-                Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(15.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("${lines.size} 行", fontWeight = FontWeight.SemiBold)
-                            Text("已解析日志", style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text("$errors 错误", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
-                            Text("高优先级", style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text("$warnings 警告", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.SemiBold)
-                            Text("建议关注", style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
+                Text("${lines.size} 行 · $errors 错误 · $warnings 警告",
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
                     shape = RoundedCornerShape(15.dp), placeholder = { Text("搜索错误、任务或类名") },
                     leadingIcon = { Icon(Icons.Rounded.Search, null) },
                     trailingIcon = if (search.isNotEmpty()) {{ IconButton(onClick = { search = "" }) { Icon(Icons.Rounded.Close, "清空") } }} else null)
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     listOf("全部", "错误", "警告", "步骤").forEachIndexed { i, name ->
                         FilterChip(selected = filter == i, onClick = { filter = i }, label = { Text(name) })
                     }
@@ -132,8 +120,8 @@ internal fun BuildLogViewer(raw: String, onClose: () -> Unit, status: String = "
                     IconToggleButton(checked = followTail, onCheckedChange = { followTail = it }) {
                         Icon(Icons.Rounded.VerticalAlignBottom, "跟随最新日志")
                     }
-                    if (firstProblem >= 0) TextButton(onClick = { followTail = false; scope.launch { listState.animateScrollToItem(firstProblem) } }) {
-                        Text("定位首个错误"); Icon(Icons.Rounded.ArrowDownward, null, Modifier.size(16.dp))
+                    if (firstProblem >= 0) IconButton(onClick = { followTail = false; scope.launch { listState.animateScrollToItem(firstProblem) } }) {
+                        Icon(Icons.Rounded.ErrorOutline, "定位首个错误")
                     }
                 }
                 HorizontalDivider()

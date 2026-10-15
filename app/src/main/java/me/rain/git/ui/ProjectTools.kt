@@ -12,14 +12,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import me.rain.git.BuildConfig
 import me.rain.git.R
@@ -36,66 +37,6 @@ internal fun TextInputDialog(title: String, label: String, description: String =
         } },
         confirmButton = { TextButton(onClick = { onConfirm(value.trim()) }, enabled = value.isNotBlank()) { Text("确定") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
-}
-
-@Composable
-internal fun ExtraGitTools(vm: RainViewModel) {
-    var input by remember { mutableStateOf<String?>(null) }
-    var confirm by remember { mutableStateOf<Pair<String, String>?>(null) }
-    val snapshot = vm.snapshot
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeading("分支与远端")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { input = "merge" }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("合并分支") }
-            OutlinedButton(onClick = { input = "delete-branch" }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("删除分支") }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { input = "remote" }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("设置 origin") }
-            OutlinedButton(onClick = { confirm = "abort-merge" to "" }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("中止合并") }
-        }
-        SectionHeading("Stash 备份", "恢复后保留备份，需要时再删除")
-        snapshot?.stashes.orEmpty().forEachIndexed { index, stash ->
-            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                    Text("stash@{$index}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    Text(stash.name, style = MaterialTheme.typography.bodyMedium)
-                    Row {
-                        TextButton(onClick = { vm.gitOperation("restore-stash", stash.id) }, enabled = !vm.busy) { Text("恢复") }
-                        TextButton(onClick = { confirm = "drop-stash" to stash.id }, enabled = !vm.busy) { Text("删除备份") }
-                    }
-                }
-            }
-        }
-        if (snapshot?.stashes.isNullOrEmpty()) Text("暂无 Stash", style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!snapshot?.tags.isNullOrEmpty()) Text("本地标签：${snapshot?.tags.orEmpty().joinToString(" · ")}",
-            style = MaterialTheme.typography.bodySmall)
-    }
-    input?.let { operation ->
-        val title = when (operation) { "merge" -> "合并到当前分支"; "delete-branch" -> "删除本地分支"; else -> "设置远端 origin" }
-        val hint = if (operation == "remote") "https://github.com/用户/仓库.git" else "分支名称"
-        val description = when (operation) {
-            "merge" -> "将目标分支合并到 ${snapshot?.branch.orEmpty()}。请先提交修改或保存 Stash。"
-            "delete-branch" -> "仅删除本地已合并分支；不会强制删除，也不会删除 GitHub 分支。"
-            else -> "此地址将用于后续拉取和推送。仅支持 GitHub HTTPS 地址。"
-        }
-        TextInputDialog(title, hint, description, onDismiss = { input = null }) {
-            confirm = operation to it; input = null
-        }
-    }
-    confirm?.let { (operation, value) ->
-        AlertDialog(onDismissRequest = { confirm = null }, title = { Text("确认 Git 操作") },
-            text = { Text(when (operation) {
-                "abort-merge" -> "将重置到当前 HEAD，丢弃本次合并结果及合并期间的未提交修改。此操作无法撤销。"
-                "drop-stash" -> "永久删除选中的 Stash 备份。此操作无法撤销。"
-                "merge" -> "将 $value 合并到 ${snapshot?.branch.orEmpty()}。"
-                "delete-branch" -> "删除本地分支 $value。"
-                else -> "把 origin 改为 $value，后续推送将使用此地址。"
-            }) },
-            confirmButton = { TextButton(onClick = { vm.gitOperation(operation, value); confirm = null }, enabled = !vm.busy) { Text("确认") } },
-            dismissButton = { TextButton(onClick = { confirm = null }) { Text("取消") } })
-    }
 }
 
 @Composable
@@ -139,8 +80,8 @@ internal fun AboutDialog(openUrl: (String) -> Unit, close: () -> Unit) {
         OpenSource("SLF4J", "MIT License", "https://github.com/qos-ch/slf4j"),
         OpenSource("Desugar JDK Libraries", "GPLv2 + Classpath Exception 等上游许可", "https://github.com/google/desugar_jdk_libs")
     ) }
-    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxWidth(.94f).fillMaxHeight(.88f), shape = RoundedCornerShape(28.dp)) {
+    FullScreenPanel(close) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("关于", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
@@ -176,5 +117,32 @@ internal fun AboutDialog(openUrl: (String) -> Unit, close: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun EditorPanel(vm: RainViewModel, path: String) {
+    var dirty by rememberSaveable(path) { mutableStateOf(false) }
+    var confirmClose by remember { mutableStateOf(false) }
+    val requestClose: () -> Unit = { if (dirty) confirmClose = true else vm.closeEditor() }
+    FullScreenPanel(requestClose) {
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = requestClose, enabled = !vm.busy) { Icon(Icons.Rounded.Close, "关闭编辑器") }
+                Text(path.substringAfterLast('/'), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextButton(onClick = vm::saveEditor, enabled = dirty && !vm.busy) { Text(if (vm.busy) "保存中…" else "保存") }
+            }
+            if ('/' in path) Text(path.substringBeforeLast('/'), Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(vm.editorText, { vm.editText(it); dirty = true }, enabled = !vm.busy,
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(12.dp), shape = RoundedCornerShape(12.dp),
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(autoCorrectEnabled = false))
+        }
+        if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false }, title = { Text("放弃未保存内容？") },
+            confirmButton = { TextButton(onClick = vm::closeEditor, enabled = !vm.busy) { Text("放弃") } },
+            dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("继续编辑") } })
     }
 }

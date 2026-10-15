@@ -65,10 +65,6 @@ class SecureStore(private val context: Context) {
         get() = prefs.getStringSet("favorite_repos", emptySet()).orEmpty().toSet()
         set(value) { prefs.edit().putStringSet("favorite_repos", value.toSet()).apply() }
 
-    var dynamicColor: Boolean
-        get() = prefs.getBoolean("dynamic_color", true)
-        set(v) { prefs.edit().putBoolean("dynamic_color", v).apply() }
-
     var themeMode: Int
         get() = prefs.getInt("theme_mode", 0)
         set(v) { prefs.edit().putInt("theme_mode", v.coerceIn(0, 2)).apply() }

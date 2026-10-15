@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -24,8 +26,8 @@ import me.rain.git.github.RemoteRepo
 
 @Composable
 internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
-    var search by remember { mutableStateOf("") }
-    var filter by remember(actionsOnly) { mutableIntStateOf(0) }
+    var search by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable(actionsOnly) { mutableIntStateOf(0) }
     val localNames = remember(vm.localDirs) { vm.localDirs.map { it.name }.toSet() }
     val filtered = remember(vm.repos, vm.favoriteRepos, localNames, search, filter) {
         vm.repos.filter { repo ->
@@ -61,7 +63,7 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 5.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             items(filtered, key = { it.fullName }) { repo ->
                 val local = vm.localDirs.any { it.name == "${repo.owner}--${repo.name}" }
-                RepositoryTile(vm, repo, local, actionsOnly)
+                Box(Modifier.animateItem()) { RepositoryTile(vm, repo, local, actionsOnly) }
             }
             if (filtered.isEmpty()) item {
                 EmptyPanel(Icons.Rounded.FolderOff, "这里还没有仓库", if (search.isNotBlank() || filter != 0) "尝试更换搜索条件" else "点击右上角刷新同步 GitHub 仓库")
@@ -73,7 +75,7 @@ internal fun RemoteScreen(vm: RainViewModel, actionsOnly: Boolean) {
 @Composable
 private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, actionsOnly: Boolean) {
     Card(
-        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else if (local) 1 else 0) }, modifier = Modifier.fillMaxWidth().animateContentSize(),
+        onClick = { vm.openRemote(repo, if (actionsOnly) 2 else 0) }, modifier = Modifier.fillMaxWidth().animateContentSize(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)),
         shape = RoundedCornerShape(21.dp)
@@ -96,33 +98,21 @@ private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, 
             }
             if (repo.description.isNotBlank()) {
                 Spacer(Modifier.height(9.dp))
-                Text(repo.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(repo.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.height(11.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                StateLabel(repo.defaultBranch)
-                if (repo.privateRepo) StateLabel("私有", MaterialTheme.colorScheme.secondary)
-                if (local) StateLabel("已克隆")
-                Spacer(Modifier.weight(1f))
-                Text(repo.updatedAt.take(10), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (actionsOnly) {
-                    FilledTonalButton(onClick = { vm.openRemote(repo, 2) }, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Rounded.Terminal, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(5.dp)); Text("构建记录")
-                    }
-                } else {
-                    TextButton(onClick = { vm.openRemote(repo, 0) }, modifier = Modifier.weight(1f)) { Text("文件") }
-                    if (local) {
-                        FilledTonalButton(onClick = { vm.openRemote(repo, 1) }, modifier = Modifier.weight(1f)) { Text("发布") }
-                    } else {
-                        FilledTonalButton(onClick = { vm.openRemote(repo, 0); vm.clone() }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("克隆") }
-                    }
-                    TextButton(onClick = { vm.openRemote(repo, 2) }, modifier = Modifier.weight(1f)) { Text("构建") }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(repo.defaultBranch, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (repo.privateRepo) StateLabel("私有", MaterialTheme.colorScheme.secondary)
+
+                if (!actionsOnly) {
+                    TextButton(onClick = {
+                        if (local) vm.openRemote(repo, 1) else { vm.openRemote(repo, 0); vm.clone() }
+                    }, enabled = !vm.busy && !vm.downloading) { Text(if (local) "发布" else "克隆") }
+                }
+                IconButton(onClick = { vm.openRemote(repo, 2) }, enabled = !vm.busy) {
+                    Icon(Icons.Rounded.PlayArrow, "查看构建")
                 }
             }
         }
@@ -131,7 +121,7 @@ private fun RepositoryTile(vm: RainViewModel, repo: RemoteRepo, local: Boolean, 
 
 @Composable
 internal fun LocalScreen(vm: RainViewModel) {
-    var search by remember { mutableStateOf("") }
+    var search by rememberSaveable { mutableStateOf("") }
     var create by remember { mutableStateOf(false) }
     if (create) TextInputDialog("初始化本地仓库", "目录名称", "创建空仓库，随后在 Git 工具中设置 origin。", onDismiss = { create = false }) {
         vm.initRepository(it); create = false
@@ -170,11 +160,10 @@ internal fun LocalScreen(vm: RainViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SettingsScreen(vm: RainViewModel, pickDir: () -> Unit, grant: () -> Unit, openUrl: (String) -> Unit) {
-    var author by remember { mutableStateOf(vm.store.author) }
-    var email by remember { mutableStateOf(vm.store.email) }
+    var author by rememberSaveable(vm.account?.login) { mutableStateOf(vm.store.author) }
+    var email by rememberSaveable(vm.account?.login) { mutableStateOf(vm.store.email) }
     var confirmLogout by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
-    val monetSupported = android.os.Build.VERSION.SDK_INT >= 31
     LazyColumn(Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(13.dp)) {
@@ -193,24 +182,11 @@ internal fun SettingsScreen(vm: RainViewModel, pickDir: () -> Unit, grant: () ->
                 }
             }
         }
-        item { SectionHeading("外观", "跟随你的壁纸和系统风格") }
+        item { SectionHeading("外观") }
         item {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(22.dp)) {
                 Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Palette, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("莫奈动态取色", fontWeight = FontWeight.SemiBold)
-                            Text(if (monetSupported) "从系统壁纸读取主题色" else "需要 Android 12 及以上版本", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(checked = vm.dynamicColorEnabled && monetSupported,
-                            onCheckedChange = vm::setDynamicColor, enabled = monetSupported)
-                    }
-                    HorizontalDivider(Modifier.padding(vertical = 14.dp))
-                    Text("显示模式", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(12.dp))
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         listOf("跟随系统", "浅色", "深色").forEachIndexed { i, text ->
                             SegmentedButton(selected = vm.themeMode == i, onClick = { vm.setTheme(i) },
@@ -284,6 +260,8 @@ internal fun SettingsScreen(vm: RainViewModel, pickDir: () -> Unit, grant: () ->
 
 @Composable
 internal fun RepositoryScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
+    val tabState = rememberSaveableStateHolder()
+    val repositoryKey = vm.selectedRepo?.fullName ?: vm.selectedDir?.path.orEmpty()
     Column(Modifier.fillMaxSize()) {
         val dir = vm.selectedDir
         if (dir == null && vm.selectedRepo != null && vm.detailTab < 2) {
@@ -298,7 +276,7 @@ internal fun RepositoryScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
                     Button(onClick = vm::clone, enabled = !vm.busy && !vm.downloading) { Text("克隆") }
                 }
             }
-        } else if (dir != null) {
+        } else if (dir != null && vm.detailTab != 1) {
             val s = vm.snapshot
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp).fillMaxWidth()) {
@@ -317,32 +295,23 @@ internal fun RepositoryScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
             }
         }
         AnimatedContent(targetState = vm.detailTab,
-            transitionSpec = { fadeIn(tween(190)) togetherWith fadeOut(tween(120)) },
+            transitionSpec = {
+                val direction = if (targetState > initialState) 1 else -1
+                (fadeIn(tween(160)) + slideInHorizontally(tween(200)) { it / 14 * direction }) togetherWith
+                    (fadeOut(tween(100)) + slideOutHorizontally(tween(200)) { -it / 14 * direction })
+            },
             label = "repository-tab", modifier = Modifier.weight(1f)) { tab ->
-            when (tab) {
-                0 -> CodeScreen(vm)
-                1 -> ChangesScreen(vm)
-                2 -> ActionsScreen(vm, openUrl)
-                3 -> CollaborationScreen(vm, openUrl)
+            tabState.SaveableStateProvider("$repositoryKey:$tab") {
+                when (tab) {
+                    0 -> CodeScreen(vm)
+                    1 -> ChangesScreen(vm)
+                    2 -> ActionsScreen(vm, openUrl)
+                    3 -> CollaborationScreen(vm, openUrl)
+                }
             }
         }
     }
-    vm.editorPath?.let { path ->
-        var dirty by remember(path) { mutableStateOf(false) }
-        var confirmClose by remember(path) { mutableStateOf(false) }
-        val requestClose: () -> Unit = { if (dirty) confirmClose = true else vm.closeEditor() }
-        AlertDialog(onDismissRequest = requestClose,
-            title = { Text(path, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-            text = { OutlinedTextField(vm.editorText, { dirty = true; vm.editText(it) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 190.dp, max = 420.dp),
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)) },
-            confirmButton = { TextButton(onClick = vm::saveEditor, enabled = dirty && !vm.busy) { Text("保存") } },
-            dismissButton = { TextButton(onClick = requestClose) { Text("关闭") } }
-        )
-        if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false }, title = { Text("放弃未保存内容？") },
-            confirmButton = { TextButton(onClick = vm::closeEditor) { Text("放弃") } },
-            dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("继续编辑") } })
-    }
+    vm.editorPath?.let { path -> EditorPanel(vm, path) }
     vm.diffText?.let { TextViewer("代码差异", it, vm::closeDiff) }
     vm.logText?.let { BuildLogViewer(it, vm::closeLog, vm.logStatus, vm.logLoading, vm::refreshLogNow, {
         vm.chosenRun?.url?.let(openUrl) ?: vm.selectedRepo?.let { repo -> openUrl("https://github.com/${repo.fullName}/actions") }
@@ -353,8 +322,8 @@ internal fun RepositoryScreen(vm: RainViewModel, openUrl: (String) -> Unit) {
 private fun CodeScreen(vm: RainViewModel) {
     val dir = vm.selectedDir
     if (dir == null) { EmptyPanel(Icons.Rounded.Code, "尚无本地文件", "克隆后即可在手机上浏览和修改源码"); return }
-    var search by remember(dir) { mutableStateOf("") }
-    var folder by remember(dir) { mutableStateOf("") }
+    var search by rememberSaveable(dir.path) { mutableStateOf("") }
+    var folder by rememberSaveable(dir.path) { mutableStateOf("") }
     var create by remember(dir) { mutableStateOf(false) }
     var fileMenu by remember(dir) { mutableStateOf<String?>(null) }
     var rename by remember(dir) { mutableStateOf<String?>(null) }
@@ -381,7 +350,7 @@ private fun CodeScreen(vm: RainViewModel) {
     }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 7.dp)) {
-            SectionHeading("项目文件", "文本文件 ≤ 512 KiB · 隐藏 dist 下载目录") {
+            SectionHeading("文件") {
                 IconButton(onClick = { create = true }, enabled = !vm.busy) { Icon(Icons.Rounded.NoteAdd, "新建文件") }
             }
             OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,

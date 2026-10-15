@@ -1,56 +1,27 @@
 package me.rain.git.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
-import androidx.compose.ui.platform.LocalContext
-import android.os.Build
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-
-private val forest = Color(0xFF375A48)
-private val amber = Color(0xFF946039)
-private val lightColors = lightColorScheme(
-    primary = forest, onPrimary = Color.White,
-    primaryContainer = Color(0xFFDDE8DD), onPrimaryContainer = Color(0xFF244634),
-    secondary = amber, secondaryContainer = Color(0xFFF4E4D7), onSecondaryContainer = Color(0xFF56361F),
-    background = Color(0xFFF7F8F4), onBackground = Color(0xFF222B25),
-    surface = Color(0xFFFEFEFB), onSurface = Color(0xFF222B25),
-    surfaceVariant = Color(0xFFE9EEE7), onSurfaceVariant = Color(0xFF59675D),
-    outlineVariant = Color(0xFFDCE4DA), outline = Color(0xFF7F9084),
-    surfaceContainer = Color(0xFFF2F4EF), surfaceContainerLow = Color(0xFFFAFCF8),
-    surfaceContainerHigh = Color(0xFFEEF1EB), surfaceContainerHighest = Color(0xFFE9EEE7)
-)
-private val darkColors = darkColorScheme(
-    primary = Color(0xFFB3D1BA), onPrimary = Color(0xFF183725),
-    primaryContainer = Color(0xFF2D4D37), onPrimaryContainer = Color(0xFFD1E7D6),
-    secondaryContainer = Color(0xFF533B2A), onSecondaryContainer = Color(0xFFFFDAC0),
-    secondary = Color(0xFFE3B28A), background = Color(0xFF111713),
-    onBackground = Color(0xFFE3EAE2), surface = Color(0xFF1A221C),
-    onSurface = Color(0xFFE3EAE2), surfaceVariant = Color(0xFF28342C),
-    onSurfaceVariant = Color(0xFFB3C2B6), outlineVariant = Color(0xFF344438),
-    outline = Color(0xFF7C8E7E), surfaceContainer = Color(0xFF1F2821),
-    surfaceContainerLow = Color(0xFF19211B), surfaceContainerHigh = Color(0xFF29352C),
-    surfaceContainerHighest = Color(0xFF303D32)
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,20 +31,10 @@ fun RainApp(
     onGrantStorage: () -> Unit,
     onOpenUrl: (String) -> Unit
 ) {
-    val context = LocalContext.current
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
     val dark = when (model.themeMode) { 1 -> false; 2 -> true; else -> systemDark }
-    val dynamic = model.dynamicColorEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val scheme = when {
-        dynamic && dark -> dynamicDarkColorScheme(context)
-        dynamic -> dynamicLightColorScheme(context)
-        dark -> darkColors
-        else -> lightColors
-    }
-    MaterialTheme(
-        colorScheme = scheme.copy(background = scheme.surfaceContainerLowest, surface = scheme.surfaceContainerLow),
-        shapes = Shapes(small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(17.dp), large = RoundedCornerShape(23.dp), extraLarge = RoundedCornerShape(28.dp))
-    ) {
+    RainTheme(dark) {
+        TransparentSystemBars()
         val snack = remember { SnackbarHostState() }
         LaunchedEffect(model.message) {
             val message = model.message ?: return@LaunchedEffect
@@ -81,6 +42,8 @@ fun RainApp(
             if (model.message == message) model.clearMessage()
         }
         val loggedIn = model.account != null
+        val pageState = rememberSaveableStateHolder()
+        val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         BackHandler(enabled = loggedIn && model.screen != "home") {
             if (model.screen == "detail") {
                 if (model.detailTab == 2 && model.chosenRun != null) model.backRun()
@@ -132,8 +95,8 @@ fun RainApp(
                 }
             },
             bottomBar = {
-                if (loggedIn && model.screen != "detail") {
-                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                if (loggedIn && model.screen != "detail" && !keyboardVisible) {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                         listOf(
                             Triple("home", "仓库", Icons.Rounded.Folder),
                             Triple("local", "本地", Icons.Rounded.Code),
@@ -141,7 +104,7 @@ fun RainApp(
                             Triple("settings", "设置", Icons.Rounded.Settings)
                         ).forEach { (page, label, icon) ->
                             NavigationBarItem(
-                                selected = model.screen == page, onClick = { model.navigate(page) },
+                                selected = model.screen == page, onClick = { model.navigate(page) }, enabled = !model.busy,
                                 icon = { Icon(icon, contentDescription = null) }, label = { Text(label) },
                                 alwaysShowLabel = true
                             )
@@ -150,20 +113,30 @@ fun RainApp(
                 }
             }
         ) { padding ->
-            Column(Modifier.padding(padding).fillMaxSize()) {
-                if (model.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Column(Modifier.padding(padding).consumeWindowInsets(padding).imePadding().fillMaxSize()) {
+                Box(Modifier.fillMaxWidth().height(3.dp)) {
+                    if (model.busy) LinearProgressIndicator(Modifier.fillMaxSize())
+                }
                 if (!loggedIn) LoginScreen(model, onOpenUrl)
                 else AnimatedContent(
                     targetState = model.screen,
-                    transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(120)) },
-                    label = "screen"
+                    transitionSpec = {
+                        val forward = targetState == "detail" || (initialState != "detail" &&
+                            listOf("home", "local", "actions", "settings").indexOf(targetState) >
+                            listOf("home", "local", "actions", "settings").indexOf(initialState))
+                        (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { if (forward) it / 12 else -it / 12 }) togetherWith
+                            (fadeOut(tween(120)) + slideOutHorizontally(tween(220)) { if (forward) -it / 12 else it / 12 })
+                    },
+                    label = "screen", modifier = Modifier.weight(1f)
                 ) { page ->
-                    when (page) {
-                        "home" -> RemoteScreen(model, actionsOnly = false)
-                        "local" -> LocalScreen(model)
-                        "actions" -> RemoteScreen(model, actionsOnly = true)
-                        "settings" -> SettingsScreen(model, onChooseDirectory, onGrantStorage, onOpenUrl)
-                        "detail" -> RepositoryScreen(model, onOpenUrl)
+                    pageState.SaveableStateProvider(page) {
+                        when (page) {
+                            "home" -> RemoteScreen(model, actionsOnly = false)
+                            "local" -> LocalScreen(model)
+                            "actions" -> RemoteScreen(model, actionsOnly = true)
+                            "settings" -> SettingsScreen(model, onChooseDirectory, onGrantStorage, onOpenUrl)
+                            "detail" -> RepositoryScreen(model, onOpenUrl)
+                        }
                     }
                 }
             }

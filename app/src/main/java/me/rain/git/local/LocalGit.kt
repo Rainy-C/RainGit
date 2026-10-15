@@ -83,7 +83,8 @@ class LocalGit(private val token: () -> String?) {
         val untracked: List<String>, val deleted: List<String>, val conflicts: List<String>,
         val history: List<String>, val branches: List<String>,
         val ahead: Int? = null, val behind: Int? = null,
-        val stashes: List<StashEntry> = emptyList(), val tags: List<String> = emptyList()
+        val stashes: List<StashEntry> = emptyList(), val tags: List<String> = emptyList(),
+        val added: List<String> = emptyList(), val removed: List<String> = emptyList()
     )
 
     data class StashEntry(val id: String, val name: String)
@@ -101,7 +102,8 @@ class LocalGit(private val token: () -> String?) {
                 .map { it.name.removePrefix("refs/heads/").removePrefix("refs/remotes/") }.sorted(),
             tracking?.aheadCount, tracking?.behindCount,
             git.stashList().call().map { StashEntry(it.name, it.shortMessage) },
-            git.tagList().call().map { it.name.removePrefix("refs/tags/") }
+            git.tagList().call().map { it.name.removePrefix("refs/tags/") },
+            added = status.added.sorted(), removed = status.removed.sorted()
         )
     }
 

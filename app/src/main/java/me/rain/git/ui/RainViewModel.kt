@@ -50,7 +50,6 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
     var downloading by androidx.compose.runtime.mutableStateOf(false)
         private set
 
-    var dynamicColorEnabled by androidx.compose.runtime.mutableStateOf(store.dynamicColor)
         private set
     var themeMode by androidx.compose.runtime.mutableIntStateOf(store.themeMode)
         private set
@@ -109,7 +108,6 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         if (store.token() != null) { account = store.cachedAccount(); refreshAccount() }
     }
 
-    fun setDynamicColor(v: Boolean) { store.dynamicColor = v; dynamicColorEnabled = v }
     fun setTheme(v: Int) { store.themeMode = v; themeMode = v }
     fun selectCollaborationFilter(value: Int) { if (busy) return; collaborationFilter = value.coerceIn(0, 1); refreshCollaboration() }
     fun clearMessage() { message = null }
@@ -348,7 +346,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         } finally { refreshLocalInner(dir) }
     }
 
-    fun publishChanges(commitMessage: String) = launchAction {
+    fun publishChanges(commitMessage: String, onPublished: () -> Unit = {}) = launchAction {
         require(!downloading) { "下载完成后再发布" }
         val dir = selectedDir ?: throw IOException("请先克隆仓库")
         require(commitMessage.isNotBlank()) { "请输入这次修改的简短说明" }
@@ -367,21 +365,13 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
                 commitSha = git.commit(dir, commitMessage, store.author, store.email)
                 git.push(dir)
             }
-            message = "已发布 $commitSha · ${dirty.size} 个文件，已切换至构建记录"
-            selectedRepo?.let { remote ->
-                detailTab = 2
-                try {
-                    workflows = client.workflows(remote)
-                    runs = client.runs(remote)
-                } catch (_: Exception) {
-                    message = "已推送成功；构建记录暂时不可获取，可手动刷新"
-                }
-            }
+            onPublished()
+            message = "已推送 $commitSha · ${dirty.size} 个文件"
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             if (commitSha != null) {
-                message = "已提交 $commitSha，但推送失败：${e.message.orEmpty()}。请点击「推送已有提交」重试。"
+                message = "已提交 $commitSha，但推送失败：${e.message.orEmpty()}。请使用「推送已有提交」重试。"
             } else {
                 message = e.message ?: "发布失败"
             }

@@ -45,7 +45,7 @@ class RainViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var chosenRun by androidx.compose.runtime.mutableStateOf<Run?>(null)
         private set
-    var jobs by androidx.compose.runtime.mutableStateOf<List<Job>>(emptyList())
+    var jobs by androidx.compose.runtime.mutableStateOf<List<me.rain.git.github.Job>>(emptyList())
         private set
     var artifacts by androidx.compose.runtime.mutableStateOf<List<Artifact>>(emptyList())
         private set
